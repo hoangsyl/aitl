@@ -21,7 +21,6 @@ let currentStream = null;
 let currentCoords = { lat: null, lng: null };
 let currentSpeechText = "";
 let isSpeaking = false;
-let lockedVoice = null;
 let speechSessionId = 0;
 let currentAudioUrl = null;
 
@@ -342,7 +341,7 @@ window.deleteHistoryItem = deleteHistoryItem;
 window.clearAllHistory = clearAllHistory;
 
 // ==========================================
-// 5. CAMERA, GPS & GIỌNG ĐỌC HOÀI MY NEURAL (BLOB URL CHO IPHONE)
+// 5. CAMERA, GPS & CHỈ DÙNG GIỌNG HOÀI MY NEURAL
 // ==========================================
 async function startCamera() {
   if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
@@ -376,27 +375,6 @@ function initGPS() {
   );
 }
 
-function getSingleVietnameseVoice() {
-  if (lockedVoice) return lockedVoice;
-  if (!("speechSynthesis" in window)) return null;
-  const voices = window.speechSynthesis.getVoices();
-  if (!voices || voices.length === 0) return null;
-
-  const viVoices = voices.filter((v) => (v.lang || "").toLowerCase().includes("vi"));
-  lockedVoice =
-    viVoices.find((v) => /enhanced|premium|hoaimy|linh/i.test(v.name)) ||
-    viVoices[0] ||
-    null;
-  return lockedVoice;
-}
-
-if ("speechSynthesis" in window) {
-  getSingleVietnameseVoice();
-  window.speechSynthesis.onvoiceschanged = () => {
-    if (!lockedVoice) getSingleVietnameseVoice();
-  };
-}
-
 function updateSpeakButton(playing) {
   const btn = document.getElementById("speakBtn");
   if (!btn) return;
@@ -414,7 +392,6 @@ function stopSpeaking() {
     URL.revokeObjectURL(currentAudioUrl);
     currentAudioUrl = null;
   }
-  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   updateSpeakButton(false);
 }
 
@@ -457,67 +434,37 @@ async function speakText(text) {
       body: JSON.stringify({ mode: "tts", text: cleanText })
     });
 
-    if (res.ok && session === speechSessionId) {
-      const data = await res.json();
-      if (data.audioBase64) {
-        currentAudioUrl = base64ToAudioBlobUrl(data.audioBase64);
-        if (btn) btn.textContent = "⏹️ Dừng (Hoài My)";
+    const data = await res.json();
+    if (session !== speechSessionId) return;
 
-        await new Promise((resolve, reject) => {
-          neuralAudio.src = currentAudioUrl;
-          neuralAudio.playbackRate = 1.0;
-          neuralAudio.onended = resolve;
-          neuralAudio.onerror = reject;
-          neuralAudio.play().catch(reject);
-        });
+    if (res.ok && data.audioBase64) {
+      currentAudioUrl = base64ToAudioBlobUrl(data.audioBase64);
+      updateSpeakButton(true);
 
-        if (session === speechSessionId) stopSpeaking();
-        return;
-      } else if (data.ttsError) {
-        console.warn("TTS fallback:", data.ttsError);
-      }
-    }
-  } catch (e) {
-    console.warn("Audio play failed:", e);
-  }
+      await new Promise((resolve, reject) => {
+        neuralAudio.src = currentAudioUrl;
+        neuralAudio.playbackRate = 1.0;
+        neuralAudio.onended = resolve;
+        neuralAudio.onerror = reject;
+        neuralAudio.play().catch(reject);
+      });
 
-  // Dự phòng giọng máy (hiện rõ trên nút để dễ kiểm tra)
-  if (session !== speechSessionId) return;
-  if (!("speechSynthesis" in window)) {
-    stopSpeaking();
-    return;
-  }
-
-  if (btn) btn.textContent = "⏹️ Dừng (Giọng máy)";
-  window.speechSynthesis.cancel();
-  const sentences = cleanText.match(/[^.!?]+[.!?]*/g) || [cleanText];
-  const voice = getSingleVietnameseVoice();
-
-  let index = 0;
-  function speakNext() {
-    if (session !== speechSessionId || !isSpeaking || index >= sentences.length) {
       if (session === speechSessionId) stopSpeaking();
       return;
     }
 
-    const utter = new SpeechSynthesisUtterance(sentences[index].trim());
-    utter.lang = "vi-VN";
-    if (voice) utter.voice = voice;
-    utter.rate = 0.96;
-    utter.pitch = 1.04;
-
-    utter.onend = () => {
-      index++;
-      speakNext();
-    };
-    utter.onerror = () => {
-      if (session === speechSessionId) stopSpeaking();
-    };
-
-    window.speechSynthesis.speak(utter);
+    throw new Error(data.ttsError || "Không tải được giọng Hoài My");
+  } catch (err) {
+    if (session === speechSessionId) {
+      stopSpeaking();
+      if (btn) {
+        btn.textContent = "⚠️ Lỗi tải giọng, bấm thử lại";
+        setTimeout(() => {
+          if (!isSpeaking) updateSpeakButton(false);
+        }, 2500);
+      }
+    }
   }
-
-  speakNext();
 }
 
 function closeSheet() {
