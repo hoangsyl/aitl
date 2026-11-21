@@ -1,8 +1,5 @@
-let MsEdgeTTS = null;
-let OUTPUT_FORMAT = null;
-try {
-  ({ MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts"));
-} catch (_) {}
+const tls = require("tls");
+const crypto = require("crypto");
 
 // Khung giới hạn địa lý cứng cho khu vực Đà Nẵng – Hội An
 const DN_HA_BOUNDS = {
@@ -105,21 +102,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.4,
-        max_tokens: 950,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              {
-                type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
+        Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model, temperature: 0.4, max_tokens: 950, response_format: { type: "json_object" }, messages: [ { role: "user", content: [ { type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
               }
             ]
           }
@@ -129,7 +112,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
     });
 
     const rawText = await res.text();
-    if (!res.ok) throw new Error(`${model}: HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`${model}: HTTP${res.status}`);
 
     const parsed = JSON.parse(rawText.trim());
     const content = parsed.choices?.[0]?.message?.content;
@@ -180,9 +163,59 @@ Hãy trả lời ngắn gọn, rõ ràng, thực tế bằng tiếng Việt.`;
   throw new Error("Chatbot tạm thời bận, bạn thử gửi lại nhé.");
 }
 
-async function generateNeuralTtsBase64(rawText) {
-  if (!MsEdgeTTS || !OUTPUT_FORMAT) return null;
+// ==========================================
+// GIỌNG HOÀI MY NEURAL TÍCH HỢP SẴN (KHÔNG CẦN PACKAGE.JSON)
+// ==========================================
+function escapeXml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
 
+function generateSecMsGec(trustedToken) {
+  let ticks = BigInt(Math.floor(Date.now() / 1000)) + 11644473600n;
+  ticks -= ticks % 300n;
+  ticks *= 10000000n;
+  return crypto
+    .createHash("sha256")
+    .update(`${ticks.toString()}${trustedToken}`, "ascii")
+    .digest("hex")
+    .toUpperCase();
+}
+
+function createWsFrame(payload, opcode = 0x1) {
+  const data = Buffer.isBuffer(payload) ? payload : Buffer.from(payload, "utf8");
+  const len = data.length;
+  let header;
+
+  if (len < 126) {
+    header = Buffer.alloc(2);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | len;
+  } else if (len < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x80 | opcode;
+    header[1] = 0x80 | 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+
+  const mask = crypto.randomBytes(4);
+  const masked = Buffer.alloc(len);
+  for (let i = 0; i < len; i++) {
+    masked[i] = data[i] ^ mask[i % 4];
+  }
+  return Buffer.concat([header, mask, masked]);
+}
+
+function generateHoaiMyBase64(rawText) {
   const cleanText = String(rawText || "")
     .replace(/[*#_•~`]/g, " ")
     .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
@@ -190,187 +223,110 @@ async function generateNeuralTtsBase64(rawText) {
     .trim()
     .slice(0, 1200);
 
-  if (!cleanText) return null;
+  if (!cleanText) return Promise.resolve(null);
 
-  const tts = new MsEdgeTTS();
-  // Đổi thành "vi-VN-NamMinhNeural" nếu bạn thích giọng nam
-  await tts.setMetadata(
-    "vi-VN-HoaiMyNeural",
-    OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
-  );
+  return new Promise((resolve, reject) => {
+    const trustedToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
+    const connId = crypto.randomBytes(16).toString("hex");
+    const reqId = crypto.randomBytes(16).toString("hex");
+    const secMsGec = generateSecMsGec(trustedToken);
+    const wsKey = crypto.randomBytes(16).toString("base64");
 
-  const streamResult = tts.toStream(cleanText);
-  const readable = streamResult.audioStream || streamResult;
+    const path =
+      `/consumer/speech/synthesize/readaloud/edge/v1` +
+      `?TrustedClientToken=${trustedToken}` +
+      `&Sec-MS-GEC=${secMsGec}` +
+      `&Sec-MS-GEC-Version=1-130.0.2849.68` +
+      `&ConnectionId=${connId}`;
 
-  return await new Promise((resolve, reject) => {
-    const chunks = [];
-    const timer = setTimeout(() => reject(new Error("TTS timeout")), 9000);
-
-    readable.on("data", (chunk) => chunks.push(chunk));
-    readable.on("end", () => {
-      clearTimeout(timer);
-      resolve(Buffer.concat(chunks).toString("base64"));
+    const socket = tls.connect(443, "speech.platform.bing.com", {
+      servername: "speech.platform.bing.com"
     });
-    readable.on("error", (err) => {
-      clearTimeout(timer);
-      reject(err);
-    });
-  });
-}
 
-module.exports = async (req, res) => {
-  res.setHeader("Content-Type", "application/json; charset=utf-8");
+    let done = false;
+    let upgraded = false;
+    let recvBuf = Buffer.alloc(0);
+    const audioChunks = [];
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ error: FRIENDLY_ERROR });
-  }
-
-  try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-
-    // --- CHẾ ĐỘ ĐỌC GIỌNG HOÀI MY NEURAL (MIỄN PHÍ, KHÔNG CẦN KEY) ---
-    if (body && body.mode === "tts") {
-      try {
-        const audioBase64 = await generateNeuralTtsBase64(body.text);
-        if (audioBase64) {
-          return res.status(200).json({ audioBase64 });
-        }
-        return res.status(200).json({ useNative: true, ttsError: "Chưa cài được msedge-tts" });
-      } catch (err) {
-        return res.status(200).json({ useNative: true, ttsError: err.message || "Lỗi tạo giọng" });
+    const timer = setTimeout(() => {
+      if (!done) {
+        done = true;
+        socket.destroy();
+        reject(new Error("TTS timeout"));
       }
+    }, 9500);
+
+    function finish(err, result) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.destroy();
+      if (err) reject(err);
+      else resolve(result);
     }
 
-    const groqKey = String(process.env.GROQ_API_KEY || "").trim();
-    if (!groqKey) {
-      return res.status(400).json({ error: FRIENDLY_ERROR });
-    }
+    socket.on("secureConnect", () => {
+      const handshake = [
+        `GET ${path} HTTP/1.1`,
+        "Host: speech.platform.bing.com",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Key: ${wsKey}`,
+        "Sec-WebSocket-Version: 13",
+        "Origin: chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+        "Pragma: no-cache",
+        "Cache-Control: no-cache",
+        "\r\n"
+      ].join("\r\n");
+      socket.write(handshake);
+    });
 
-    // --- CHẾ ĐỘ CHATBOT ---
-    if (body && body.mode === "chat") {
-      const reply = await handleChatMode({
-        apiKey: groqKey,
-        messages: body.messages,
-        locationContext: body.locationContext
-      });
-      return res.status(200).json({ reply });
-    }
+    socket.on("data", (chunk) => {
+      recvBuf = Buffer.concat([recvBuf, chunk]);
 
-    // --- CHẾ ĐỘ QUÉT ẢNH ---
-    const { imageBase64, locationContext, lat, lng } = body || {};
-    if (!imageBase64) {
-      return res.status(400).json({ error: FRIENDLY_ERROR });
-    }
+      if (!upgraded) {
+        const headerEnd = recvBuf.indexOf("\r\n\r\n");
+        if (headerEnd === -1) return;
 
-    const areaPoint = clampToDaNangHoiAn(lat, lng, locationContext);
-
-    const prompt = `Bạn là chuyên gia văn hóa Đà Nẵng – Hội An, đồng thời là chuyên gia dinh dưỡng & phân tích sản phẩm.
-Ngữ cảnh vị trí (chỉ trong Đà Nẵng – Hội An): ${locationContext || "Đà Nẵng – Hội An"}.
-
-Nhiệm vụ: Nhận diện chính xác đối tượng trong ảnh và phân loại đúng 1 trong 2 nhóm:
-- NHÓM ĐỊA ĐIỂM: "Di tích" | "Nhà hàng & Quán ăn" | "Shop & Workshop" | "Hán Nôm"
-- NHÓM VẬT PHẨM / THỨC ĂN: "Thức ăn & Đồ uống" | "Sản phẩm" | "Vật thể"
-
-Yêu cầu nội dung (viết văn phong hướng dẫn viên du lịch truyền cảm, chấm phẩy rõ ràng để đọc thuyết minh thật hay):
-1. "cau_chuyen_lich_su": 2–3 câu giới thiệu rõ nguồn gốc, bối cảnh hoặc công dụng.
-2. "giai_thoai_dac_biet" (Điểm độc đáo): Viết thật hay, cuốn hút, giàu cảm xúc (4–5 câu, khoảng 80–110 từ), chấm phẩy đầy đủ, phân tích kỹ chi tiết nhìn thấy trên ảnh và giá trị đặc trưng.
-3. "thong_tin_san_pham":
-   - Nếu là NHÓM VẬT PHẨM / THỨC ĂN: đặt "hien_thi": true.
-     + "calo_uoc_tinh": Ước tính cụ thể lượng calo (hoặc ghi "Không áp dụng (vật dụng không ăn được)").
-     + "tot_cho_suc_khoe": Đánh giá rõ có tốt cho sức khỏe không (hoặc độ an toàn khi dùng).
-     + "chi_tiet_san_pham": Mô tả chi tiết thành phần, thương hiệu/xuất xứ, công dụng.
-     + "noi_mua_goi_y": Gợi ý cụ thể địa chỉ hoặc hệ thống cửa hàng uy tín tại Đà Nẵng – Hội An bán đúng vật phẩm này.
-     + "tu_khoa_mua_hang": Từ khóa ngắn gọn để tìm đúng nơi bán vật phẩm này trên Google Maps tại Đà Nẵng – Hội An.
-   - Nếu là NHÓM ĐỊA ĐIỂM: đặt "hien_thi": false và để trống các chuỗi bên trong.
-4. "danh_gia_ban_dia": Tổng hợp nhận xét chân thực theo phong cách Local Guide Đà Nẵng – Hội An.
-5. "han_viet": CHỈ đặt "co_han_viet": true nếu ảnh THẬT SỰ CÓ CHỮ HÁN/NÔM.
-
-Trả về DUY NHẤT JSON thuần theo mẫu:
-{
-  "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
-  "la_dia_diem": true,
-  "ten_dia_diem": "Tên chính xác đối tượng",
-  "dia_chi": "Địa chỉ tại Đà Nẵng / Hội An (hoặc thương hiệu/xuất xứ nếu là sản phẩm)",
-  "nien_dai_hoac_gia": "Niên đại hoặc mức giá tham khảo",
-  "cau_chuyen_lich_su": "2–3 câu giới thiệu.",
-  "giai_thoai_dac_biet": "4–5 câu miêu tả thật hay và chi tiết về điểm độc đáo.",
-  "thong_tin_san_pham": {
-    "hien_thi": false,
-    "calo_uoc_tinh": "",
-    "tot_cho_suc_khoe": "",
-    "chi_tiet_san_pham": "",
-    "noi_mua_goi_y": "",
-    "tu_khoa_mua_hang": ""
-  },
-  "han_viet": {
-    "co_han_viet": false,
-    "chu_goc": "",
-    "phien_am": "",
-    "phan_tich_tung_tu": [],
-    "y_nghia_tong_the": ""
-  },
-  "danh_gia_ban_dia": {
-    "tom_tat": "Tóm tắt góc nhìn của người địa phương (2 câu).",
-    "review_mau": ["Nhận xét thực tế 1", "Nhận xét thực tế 2"]
-  }
-}`;
-
-    const models = await fetchWorkingGroqModels(groqKey);
-
-    for (const model of models) {
-      try {
-        const result = await callGroqVision({
-          apiKey: groqKey,
-          model,
-          prompt,
-          imageBase64
-        });
-
-        const isPlace =
-          result.la_dia_diem === true ||
-          /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm/i.test(result.loai_doi_tuong || "");
-
-        result.toa_do_khu_vuc = {
-          lat: areaPoint.lat,
-          lng: areaPoint.lng,
-          khu_vuc: "Đà Nẵng – Hội An"
-        };
-
-        if (isPlace) {
-          const placeQuery = result.ten_dia_diem || result.dia_chi || "Đà Nẵng - Hội An";
-          result.hien_chi_duong = true;
-          result.google_maps_url = buildDnHaMapsUrl({
-            query: placeQuery,
-            lat: areaPoint.lat,
-            lng: areaPoint.lng,
-            locationContext
-          });
-          result.chi_duong_url = buildDnHaDirectionsUrl({
-            destName: placeQuery,
-            lat: areaPoint.lat,
-            lng: areaPoint.lng,
-            locationContext
-          });
-        } else {
-          const buyQuery =
-            result.thong_tin_san_pham?.tu_khoa_mua_hang ||
-            `mua ${result.ten_dia_diem || "sản phẩm"}`;
-          result.hien_chi_duong = false;
-          result.google_maps_url = buildDnHaMapsUrl({
-            query: buyQuery,
-            lat: areaPoint.lat,
-            lng: areaPoint.lng,
-            locationContext
-          });
-          result.chi_duong_url = "";
+        const headerText = recvBuf.slice(0, headerEnd).toString("utf8");
+        if (!headerText.includes("101")) {
+          return finish(new Error("Handshake failed"));
         }
 
-        return res.status(200).json(result);
-      } catch (_) {}
-    }
+        upgraded = true;
+        recvBuf = recvBuf.slice(headerEnd + 4);
 
-    return res.status(502).json({ error: FRIENDLY_ERROR });
-  } catch (_) {
-    return res.status(500).json({ error: FRIENDLY_ERROR });
-  }
-};
+        const ts = new Date().toString();
+        const configMsg =
+          `X-Timestamp:${ts}\r\n` +
+          `Content-Type:application/json; charset=utf-8\r\n` +
+          `Path:speech.config\r\n\r\n` +
+          `{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}`;
+
+        const ssmlMsg =
+          `X-RequestId:${reqId}\r\n` +
+          `Content-Type:application/ssml+xml\r\n` +
+          `X-Timestamp:${ts}\r\n` +
+          `Path:ssml\r\n\r\n` +
+          `<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='vi-VN'>` +
+          `<voice name='vi-VN-HoaiMyNeural'>` +
+          `<prosody pitch='+0Hz' rate='+0%' volume='+0%'>${escapeXml(cleanText)}</prosody>` +
+          `</voice></speak>`;
+
+        socket.write(createWsFrame(configMsg, 0x1));
+        socket.write(createWsFrame(ssmlMsg, 0x1));
+      }
+
+      while (recvBuf.length >= 2) {
+        const opcode = recvBuf[0] & 0x0f;
+        const masked = (recvBuf[1] & 0x80) !== 0;
+        let payloadLen = recvBuf[1] & 0x7f;
+        let offset = 2;
+
+        if (payloadLen === 126) {
+          if (recvBuf.length < 4) return;
+          payloadLen = recvBuf.readUInt16BE(2);
+          offset = 4;
+        } else if (payloadLen === 127) {
+          if (recvBuf.length < 10)
