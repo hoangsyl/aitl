@@ -1,1 +1,7 @@
-
+{
+  "name": "aivolution-scanner",
+  "version": "1.0.0",
+  "dependencies": {
+    "msedge-tts": "latest"
+  }
+}
