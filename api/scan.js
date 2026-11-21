@@ -98,6 +98,10 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
+    const imageUrl = imageBase64.startsWith("data:image")
+      ? imageBase64
+      : `data:image/jpeg;base64,${imageBase64}`;
+
     const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -107,7 +111,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       body: JSON.stringify({
         model,
         temperature: 0.3,
-        max_tokens: 950,
+        max_tokens: 900,
         messages: [
           {
             role: "user",
@@ -115,7 +119,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
               { type: "text", text: prompt },
               {
                 type: "image_url",
-                image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
+                image_url: { url: imageUrl }
               }
             ]
           }
@@ -134,6 +138,55 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function runVisionWithFallback({ apiKey, prompt, imageBase64 }) {
+  const fallbackList = [
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+    "llama-3.2-90b-vision-preview",
+    "llama-3.2-11b-vision-preview"
+  ];
+
+  let candidates = [...fallbackList];
+  try {
+    const allModels = await fetchWorkingGroqModels(apiKey);
+    const visionFromApi = allModels.filter((m) =>
+      /vision|scout|maverick|llama-4|vl|omni/i.test(m)
+    );
+    if (visionFromApi.length > 0) {
+      candidates = [...new Set([...visionFromApi, ...fallbackList])];
+    }
+  } catch (_) {}
+
+  // Chạy song song 2 model đầu tiên để phản hồi nhanh nhất
+  const firstBatch = candidates.slice(0, 2);
+  const firstResults = await Promise.allSettled(
+    firstBatch.map((model) =>
+      callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 8500 })
+    )
+  );
+  for (const r of firstResults) {
+    if (r.status === "fulfilled" && r.value && typeof r.value === "object") {
+      return r.value;
+    }
+  }
+
+  // Nếu batch đầu chưa được, thử lần lượt các model còn lại
+  for (const model of candidates.slice(2)) {
+    try {
+      const res = await callGroqVision({
+        apiKey,
+        model,
+        prompt,
+        imageBase64,
+        timeoutMs: 8500
+      });
+      if (res && typeof res === "object") return res;
+    } catch (_) {}
+  }
+
+  throw new Error("All vision models failed");
 }
 
 async function handleChatMode({ apiKey, messages, locationContext }) {
@@ -488,76 +541,53 @@ CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không kèm chữ giải thích bên n
   }
 }`;
 
-    // Ưu tiên tuyệt đối các model Vision của Groq (Llama 4 Scout / Maverick)
-    const defaultVision = [
-      "meta-llama/llama-4-scout-17b-16e-instruct",
-      "meta-llama/llama-4-maverick-17b-128e-instruct"
-    ];
+    const result = await runVisionWithFallback({
+      apiKey: groqKey,
+      prompt,
+      imageBase64
+    });
 
-    let modelsToTry = [...defaultVision];
-    try {
-      const allModels = await fetchWorkingGroqModels(groqKey);
-      const dynamicVision = allModels.filter(
-        (m) => /vision|scout|maverick|llama-4/i.test(m) && !modelsToTry.includes(m)
-      );
-      modelsToTry = [...modelsToTry, ...dynamicVision];
-    } catch (_) {}
+    const isPlace =
+      result.la_dia_diem === true ||
+      /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm/i.test(result.loai_doi_tuong || "");
 
-    for (const model of modelsToTry) {
-      try {
-        const result = await callGroqVision({
-          apiKey: groqKey,
-          model,
-          prompt,
-          imageBase64,
-          timeoutMs: 8500
-        });
+    result.toa_do_khu_vuc = {
+      lat: areaPoint.lat,
+      lng: areaPoint.lng,
+      khu_vuc: "Đà Nẵng – Hội An"
+    };
 
-        const isPlace =
-          result.la_dia_diem === true ||
-          /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm/i.test(result.loai_doi_tuong || "");
-
-        result.toa_do_khu_vuc = {
-          lat: areaPoint.lat,
-          lng: areaPoint.lng,
-          khu_vuc: "Đà Nẵng – Hội An"
-        };
-
-        if (isPlace) {
-          const placeQuery = result.ten_dia_diem || result.dia_chi || "Đà Nẵng - Hội An";
-          result.hien_chi_duong = true;
-          result.google_maps_url = buildDnHaMapsUrl({
-            query: placeQuery,
-            lat: areaPoint.lat,
-            lng: areaPoint.lng,
-            locationContext
-          });
-          result.chi_duong_url = buildDnHaDirectionsUrl({
-            destName: placeQuery,
-            lat: areaPoint.lat,
-            lng: areaPoint.lng,
-            locationContext
-          });
-        } else {
-          const buyQuery =
-            result.thong_tin_san_pham?.tu_khoa_mua_hang ||
-            `mua ${result.ten_dia_diem || "sản phẩm"}`;
-          result.hien_chi_duong = false;
-          result.google_maps_url = buildDnHaMapsUrl({
-            query: buyQuery,
-            lat: areaPoint.lat,
-            lng: areaPoint.lng,
-            locationContext
-          });
-          result.chi_duong_url = "";
-        }
-
-        return res.status(200).json(result);
-      } catch (_) {}
+    if (isPlace) {
+      const placeQuery = result.ten_dia_diem || result.dia_chi || "Đà Nẵng - Hội An";
+      result.hien_chi_duong = true;
+      result.google_maps_url = buildDnHaMapsUrl({
+        query: placeQuery,
+        lat: areaPoint.lat,
+        lng: areaPoint.lng,
+        locationContext
+      });
+      result.chi_duong_url = buildDnHaDirectionsUrl({
+        destName: placeQuery,
+        lat: areaPoint.lat,
+        lng: areaPoint.lng,
+        locationContext
+      });
+    } else {
+      const buyQuery =
+        result.thong_tin_san_pham?.tu_khoa_mua_hang ||
+        `mua ${result.ten_dia_diem || "sản phẩm"}`;
+      result.hien_chi_duong = false;
+      result.google_maps_url = buildDnHaMapsUrl({
+        query: buyQuery,
+        lat: areaPoint.lat,
+        lng: areaPoint.lng,
+        locationContext
+      });
+      result.chi_duong_url = "";
     }
 
-    return res.status(502).json({ error: FRIENDLY_ERROR });
+    return res.status(200).json(result);
   } catch (_) {
-    return res.status(500).json({ error: FRIENDLY_ERROR });
+    return res.status(502).json({ error: FRIENDLY_ERROR });
   }
 };
