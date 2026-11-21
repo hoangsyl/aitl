@@ -19,6 +19,10 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
 
+// Trạng thái xác nhận xóa tất cả (2 chạm thay cho confirm() để không đơ camera iOS)
+let confirmClearArmed = false;
+let confirmClearTimer = null;
+
 // Web Audio API + Bộ nhớ đệm tải trước giọng Hoài My
 let audioCtx = null;
 let activeSource = null;
@@ -97,11 +101,17 @@ function makeThumbnail(sourceCanvas) {
   }
 }
 
+function resetClearConfirm() {
+  confirmClearArmed = false;
+  clearTimeout(confirmClearTimer);
+}
+
 // ==========================================
 // 2. MENU CHÍNH (LỊCH SỬ | THỜI TIẾT | CHATBOT)
 // ==========================================
 function openMenuSheet(activeTab = "history") {
   stopSpeaking();
+  resetClearConfirm();
 
   sheetContent.innerHTML = `
     <div class="sheet-header">
@@ -324,12 +334,37 @@ function deleteHistoryItem(event, id) {
   const list = loadHistory().filter((x) => x.id !== id);
   saveHistoryList(list);
   renderHistoryTab();
+  ensureCameraPlaying();
 }
 
 function clearAllHistory() {
-  if (!confirm("Xóa toàn bộ lịch sử quét?")) return;
+  const btn = document.querySelector(".btn-clear-all");
+
+  // Lần bấm 1: đổi chữ nút để xác nhận (không dùng confirm() làm đơ camera)
+  if (!confirmClearArmed) {
+    confirmClearArmed = true;
+    if (btn) {
+      btn.textContent = "Bấm lại để xóa";
+      btn.style.background = "#dc2626";
+      btn.style.color = "#fff";
+    }
+    clearTimeout(confirmClearTimer);
+    confirmClearTimer = setTimeout(() => {
+      confirmClearArmed = false;
+      if (btn) {
+        btn.textContent = "Xóa tất cả";
+        btn.style.background = "";
+        btn.style.color = "";
+      }
+    }, 3500);
+    return;
+  }
+
+  // Lần bấm 2: thực hiện xóa ngay và giữ camera chạy mượt
+  resetClearConfirm();
   saveHistoryList([]);
   renderHistoryTab();
+  ensureCameraPlaying();
 }
 
 window.openMenuSheet = openMenuSheet;
@@ -348,10 +383,27 @@ async function startCamera() {
       audio: false
     });
     video.srcObject = currentStream;
+    video.play().catch(() => {});
   } catch (err) {
     alert("Không mở được camera. Bạn có thể bấm nút 🖼️ để chọn ảnh từ máy.");
   }
 }
+
+function ensureCameraPlaying() {
+  if (!video) return;
+  const track = currentStream?.getVideoTracks?.()[0];
+  if (!track || track.readyState === "ended") {
+    startCamera();
+    return;
+  }
+  if (video.paused) {
+    video.play().catch(() => {});
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) ensureCameraPlaying();
+});
 
 function initGPS() {
   if (!navigator.geolocation) {
@@ -410,7 +462,6 @@ function getOrFetchTtsBuffer(cleanText) {
       throw err;
     });
 
-  // Giữ tối đa 10 bản cache trong RAM
   if (ttsBufferCache.size >= 10) {
     const firstKey = ttsBufferCache.keys().next().value;
     ttsBufferCache.delete(firstKey);
@@ -419,7 +470,6 @@ function getOrFetchTtsBuffer(cleanText) {
   return promise;
 }
 
-// Tự tải ngầm giọng đọc ngay khi kết quả vừa hiện lên
 function prefetchTts(text) {
   const cleanText = normalizeTtsText(text);
   if (!cleanText) return;
@@ -438,7 +488,6 @@ function unlockAudioContext() {
 
 function decodeAudio(ctx, arrayBuffer) {
   return new Promise((resolve, reject) => {
-    // slice(0) để giữ nguyên bản gốc trong cache nếu người dùng bấm nghe lại
     ctx.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
   });
 }
@@ -471,7 +520,6 @@ async function speakText(text) {
   const cleanText = normalizeTtsText(text);
   if (!cleanText) return;
 
-  // Mở khóa loa NGAY LẬP TỨC trong cú chạm đầu tiên (chuẩn iOS Safari)
   const ctx = unlockAudioContext();
   if (!ctx) {
     alert("Trình duyệt không hỗ trợ phát âm thanh.");
@@ -526,7 +574,9 @@ async function speakText(text) {
 
 function closeSheet() {
   stopSpeaking();
+  resetClearConfirm();
   sheet.classList.remove("open");
+  ensureCameraPlaying();
 }
 
 window.speakText = speakText;
