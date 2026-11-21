@@ -235,8 +235,10 @@ module.exports = async (req, res) => {
         if (audioBase64) {
           return res.status(200).json({ audioBase64 });
         }
-      } catch (_) {}
-      return res.status(200).json({ useNative: true });
+        return res.status(200).json({ useNative: true, ttsError: "Chưa cài được msedge-tts" });
+      } catch (err) {
+        return res.status(200).json({ useNative: true, ttsError: err.message || "Lỗi tạo giọng" });
+      }
     }
 
     const groqKey = String(process.env.GROQ_API_KEY || "").trim();
