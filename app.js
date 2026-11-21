@@ -23,6 +23,7 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let lockedVoice = null;
 let speechSessionId = 0;
+let currentAudioUrl = null;
 
 const neuralAudio = new Audio();
 neuralAudio.preload = "auto";
@@ -341,7 +342,7 @@ window.deleteHistoryItem = deleteHistoryItem;
 window.clearAllHistory = clearAllHistory;
 
 // ==========================================
-// 5. CAMERA, GPS & GIỌNG ĐỌC HOÀI MY NEURAL (CÓ DỰ PHÒNG MƯỢT)
+// 5. CAMERA, GPS & GIỌNG ĐỌC HOÀI MY NEURAL (BLOB URL CHO IPHONE)
 // ==========================================
 async function startCamera() {
   if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
@@ -409,8 +410,22 @@ function stopSpeaking() {
   neuralAudio.onended = null;
   neuralAudio.onerror = null;
   neuralAudio.removeAttribute("src");
+  if (currentAudioUrl) {
+    URL.revokeObjectURL(currentAudioUrl);
+    currentAudioUrl = null;
+  }
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   updateSpeakButton(false);
+}
+
+function base64ToAudioBlobUrl(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  const blob = new Blob([bytes], { type: "audio/mpeg" });
+  return URL.createObjectURL(blob);
 }
 
 async function speakText(text) {
@@ -429,9 +444,9 @@ async function speakText(text) {
   isSpeaking = true;
 
   const btn = document.getElementById("speakBtn");
-  if (btn) btn.textContent = "⏳ Đang tải giọng đọc...";
+  if (btn) btn.textContent = "⏳ Đang tạo giọng Hoài My...";
 
-  // Mở khóa loa trên iOS Safari ngay trong sự kiện chạm của người dùng
+  // Mở khóa loa trên iOS Safari ngay khi chạm nút
   neuralAudio.src = SILENT_WAV;
   neuralAudio.play().catch(() => {});
 
@@ -445,32 +460,35 @@ async function speakText(text) {
     if (res.ok && session === speechSessionId) {
       const data = await res.json();
       if (data.audioBase64) {
-        updateSpeakButton(true);
+        currentAudioUrl = base64ToAudioBlobUrl(data.audioBase64);
+        if (btn) btn.textContent = "⏹️ Dừng (Hoài My)";
+
         await new Promise((resolve, reject) => {
-          neuralAudio.src = `data:audio/mpeg;base64,${data.audioBase64}`;
+          neuralAudio.src = currentAudioUrl;
           neuralAudio.playbackRate = 1.0;
           neuralAudio.onended = resolve;
           neuralAudio.onerror = reject;
           neuralAudio.play().catch(reject);
         });
-        if (session === speechSessionId) {
-          isSpeaking = false;
-          updateSpeakButton(false);
-        }
+
+        if (session === speechSessionId) stopSpeaking();
         return;
+      } else if (data.ttsError) {
+        console.warn("TTS fallback:", data.ttsError);
       }
     }
-  } catch (_) {}
+  } catch (e) {
+    console.warn("Audio play failed:", e);
+  }
 
-  // Dự phòng giọng máy nếu mạng yếu hoặc server TTS bận
+  // Dự phòng giọng máy (hiện rõ trên nút để dễ kiểm tra)
   if (session !== speechSessionId) return;
   if (!("speechSynthesis" in window)) {
-    isSpeaking = false;
-    updateSpeakButton(false);
+    stopSpeaking();
     return;
   }
 
-  updateSpeakButton(true);
+  if (btn) btn.textContent = "⏹️ Dừng (Giọng máy)";
   window.speechSynthesis.cancel();
   const sentences = cleanText.match(/[^.!?]+[.!?]*/g) || [cleanText];
   const voice = getSingleVietnameseVoice();
@@ -478,10 +496,7 @@ async function speakText(text) {
   let index = 0;
   function speakNext() {
     if (session !== speechSessionId || !isSpeaking || index >= sentences.length) {
-      if (session === speechSessionId) {
-        isSpeaking = false;
-        updateSpeakButton(false);
-      }
+      if (session === speechSessionId) stopSpeaking();
       return;
     }
 
@@ -496,10 +511,7 @@ async function speakText(text) {
       speakNext();
     };
     utter.onerror = () => {
-      if (session === speechSessionId) {
-        isSpeaking = false;
-        updateSpeakButton(false);
-      }
+      if (session === speechSessionId) stopSpeaking();
     };
 
     window.speechSynthesis.speak(utter);
