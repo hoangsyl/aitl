@@ -93,7 +93,7 @@ async function fetchWorkingGroqModels(apiKey) {
   return activeModels;
 }
 
-async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 12000 }) {
+async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 8500 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -102,7 +102,20 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}` }, body: JSON.stringify({ model, temperature: 0.4, max_tokens: 950, response_format: { type: "json_object" }, messages: [ { role: "user", content: [ { type: "text", text: prompt }, { type: "image_url", image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.3,
+        max_tokens: 950,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              {
+                type: "image_url",
+                image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
               }
             ]
           }
@@ -112,7 +125,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
     });
 
     const rawText = await res.text();
-    if (!res.ok) throw new Error(`${model}: HTTP${res.status}`);
+    if (!res.ok) throw new Error(`${model}: HTTP ${res.status}`);
 
     const parsed = JSON.parse(rawText.trim());
     const content = parsed.choices?.[0]?.message?.content;
@@ -329,4 +342,222 @@ function generateHoaiMyBase64(rawText) {
           payloadLen = recvBuf.readUInt16BE(2);
           offset = 4;
         } else if (payloadLen === 127) {
-          if (recvBuf.length < 10)
+          if (recvBuf.length < 10) return;
+          payloadLen = Number(recvBuf.readBigUInt64BE(2));
+          offset = 10;
+        }
+
+        if (masked) offset += 4;
+        if (recvBuf.length < offset + payloadLen) return;
+
+        const payload = recvBuf.slice(offset, offset + payloadLen);
+        recvBuf = recvBuf.slice(offset + payloadLen);
+
+        if (opcode === 0x1) {
+          const textData = payload.toString("utf8");
+          if (textData.includes("Path:turn.end")) {
+            if (audioChunks.length > 0) {
+              return finish(null, Buffer.concat(audioChunks).toString("base64"));
+            }
+            return finish(new Error("Empty audio"));
+          }
+        } else if (opcode === 0x2 && payload.length > 2) {
+          const headerLen = payload.readUInt16BE(0);
+          const headerStr = payload.slice(2, 2 + headerLen).toString("utf8");
+          if (headerStr.includes("Path:audio")) {
+            audioChunks.push(payload.slice(2 + headerLen));
+          }
+        } else if (opcode === 0x9) {
+          socket.write(createWsFrame(payload, 0xa));
+        } else if (opcode === 0x8) {
+          if (audioChunks.length > 0) {
+            return finish(null, Buffer.concat(audioChunks).toString("base64"));
+          }
+          return finish(new Error("Connection closed"));
+        }
+      }
+    });
+
+    socket.on("error", (err) => finish(err));
+    socket.on("close", () => {
+      if (!done) {
+        if (audioChunks.length > 0) {
+          finish(null, Buffer.concat(audioChunks).toString("base64"));
+        } else {
+          finish(new Error("Socket closed"));
+        }
+      }
+    });
+  });
+}
+
+module.exports = async (req, res) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: FRIENDLY_ERROR });
+  }
+
+  try {
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+
+    // --- CHẾ ĐỘ ĐỌC GIỌNG HOÀI MY NEURAL (TÍCH HỢP SẴN) ---
+    if (body && body.mode === "tts") {
+      try {
+        const audioBase64 = await generateHoaiMyBase64(body.text);
+        if (audioBase64) {
+          return res.status(200).json({ audioBase64 });
+        }
+        return res.status(502).json({ ttsError: "Không tạo được âm thanh" });
+      } catch (err) {
+        return res.status(502).json({ ttsError: err.message || "Lỗi tạo giọng" });
+      }
+    }
+
+    const groqKey = String(process.env.GROQ_API_KEY || "").trim();
+    if (!groqKey) {
+      return res.status(400).json({ error: FRIENDLY_ERROR });
+    }
+
+    // --- CHẾ ĐỘ CHATBOT ---
+    if (body && body.mode === "chat") {
+      const reply = await handleChatMode({
+        apiKey: groqKey,
+        messages: body.messages,
+        locationContext: body.locationContext
+      });
+      return res.status(200).json({ reply });
+    }
+
+    // --- CHẾ ĐỘ QUÉT ẢNH ---
+    const { imageBase64, locationContext, lat, lng } = body || {};
+    if (!imageBase64) {
+      return res.status(400).json({ error: FRIENDLY_ERROR });
+    }
+
+    const areaPoint = clampToDaNangHoiAn(lat, lng, locationContext);
+
+    const prompt = `Bạn là chuyên gia văn hóa Đà Nẵng – Hội An, đồng thời là chuyên gia dinh dưỡng & phân tích sản phẩm.
+Ngữ cảnh vị trí (chỉ trong Đà Nẵng – Hội An): ${locationContext || "Đà Nẵng – Hội An"}.
+
+Nhiệm vụ: Nhận diện chính xác đối tượng trong ảnh và phân loại đúng 1 trong 2 nhóm:
+- NHÓM ĐỊA ĐIỂM: "Di tích" | "Nhà hàng & Quán ăn" | "Shop & Workshop" | "Hán Nôm"
+- NHÓM VẬT PHẨM / THỨC ĂN: "Thức ăn & Đồ uống" | "Sản phẩm" | "Vật thể"
+
+Yêu cầu nội dung (viết văn phong hướng dẫn viên du lịch truyền cảm, chấm phẩy rõ ràng để đọc thuyết minh thật hay):
+1. "cau_chuyen_lich_su": 2–3 câu giới thiệu rõ nguồn gốc, bối cảnh hoặc công dụng.
+2. "giai_thoai_dac_biet" (Điểm độc đáo): Viết thật hay, cuốn hút, giàu cảm xúc (4–5 câu, khoảng 80–110 từ), chấm phẩy đầy đủ, phân tích kỹ chi tiết nhìn thấy trên ảnh và giá trị đặc trưng.
+3. "thong_tin_san_pham":
+   - Nếu là NHÓM VẬT PHẨM / THỨC ĂN: đặt "hien_thi": true.
+     + "calo_uoc_tinh": Ước tính cụ thể lượng calo (hoặc ghi "Không áp dụng (vật dụng không ăn được)").
+     + "tot_cho_suc_khoe": Đánh giá rõ có tốt cho sức khỏe không (hoặc độ an toàn khi dùng).
+     + "chi_tiet_san_pham": Mô tả chi tiết thành phần, thương hiệu/xuất xứ, công dụng.
+     + "noi_mua_goi_y": Gợi ý cụ thể địa chỉ hoặc hệ thống cửa hàng uy tín tại Đà Nẵng – Hội An bán đúng vật phẩm này.
+     + "tu_khoa_mua_hang": Từ khóa ngắn gọn để tìm đúng nơi bán vật phẩm này trên Google Maps tại Đà Nẵng – Hội An.
+   - Nếu là NHÓM ĐỊA ĐIỂM: đặt "hien_thi": false và để trống các chuỗi bên trong.
+4. "danh_gia_ban_dia": Tổng hợp nhận xét chân thực theo phong cách Local Guide Đà Nẵng – Hội An.
+5. "han_viet": CHỈ đặt "co_han_viet": true nếu ảnh THẬT SỰ CÓ CHỮ HÁN/NÔM.
+
+CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không kèm chữ giải thích bên ngoài) theo mẫu:
+{
+  "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
+  "la_dia_diem": true,
+  "ten_dia_diem": "Tên chính xác đối tượng",
+  "dia_chi": "Địa chỉ tại Đà Nẵng / Hội An (hoặc thương hiệu/xuất xứ nếu là sản phẩm)",
+  "nien_dai_hoac_gia": "Niên đại hoặc mức giá tham khảo",
+  "cau_chuyen_lich_su": "2–3 câu giới thiệu.",
+  "giai_thoai_dac_biet": "4–5 câu miêu tả thật hay và chi tiết về điểm độc đáo.",
+  "thong_tin_san_pham": {
+    "hien_thi": false,
+    "calo_uoc_tinh": "",
+    "tot_cho_suc_khoe": "",
+    "chi_tiet_san_pham": "",
+    "noi_mua_goi_y": "",
+    "tu_khoa_mua_hang": ""
+  },
+  "han_viet": {
+    "co_han_viet": false,
+    "chu_goc": "",
+    "phien_am": "",
+    "phan_tich_tung_tu": [],
+    "y_nghia_tong_the": ""
+  },
+  "danh_gia_ban_dia": {
+    "tom_tat": "Tóm tắt góc nhìn của người địa phương (2 câu).",
+    "review_mau": ["Nhận xét thực tế 1", "Nhận xét thực tế 2"]
+  }
+}`;
+
+    // Ưu tiên tuyệt đối các model Vision của Groq (Llama 4 Scout / Maverick)
+    const defaultVision = [
+      "meta-llama/llama-4-scout-17b-16e-instruct",
+      "meta-llama/llama-4-maverick-17b-128e-instruct"
+    ];
+
+    let modelsToTry = [...defaultVision];
+    try {
+      const allModels = await fetchWorkingGroqModels(groqKey);
+      const dynamicVision = allModels.filter(
+        (m) => /vision|scout|maverick|llama-4/i.test(m) && !modelsToTry.includes(m)
+      );
+      modelsToTry = [...modelsToTry, ...dynamicVision];
+    } catch (_) {}
+
+    for (const model of modelsToTry) {
+      try {
+        const result = await callGroqVision({
+          apiKey: groqKey,
+          model,
+          prompt,
+          imageBase64,
+          timeoutMs: 8500
+        });
+
+        const isPlace =
+          result.la_dia_diem === true ||
+          /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm/i.test(result.loai_doi_tuong || "");
+
+        result.toa_do_khu_vuc = {
+          lat: areaPoint.lat,
+          lng: areaPoint.lng,
+          khu_vuc: "Đà Nẵng – Hội An"
+        };
+
+        if (isPlace) {
+          const placeQuery = result.ten_dia_diem || result.dia_chi || "Đà Nẵng - Hội An";
+          result.hien_chi_duong = true;
+          result.google_maps_url = buildDnHaMapsUrl({
+            query: placeQuery,
+            lat: areaPoint.lat,
+            lng: areaPoint.lng,
+            locationContext
+          });
+          result.chi_duong_url = buildDnHaDirectionsUrl({
+            destName: placeQuery,
+            lat: areaPoint.lat,
+            lng: areaPoint.lng,
+            locationContext
+          });
+        } else {
+          const buyQuery =
+            result.thong_tin_san_pham?.tu_khoa_mua_hang ||
+            `mua ${result.ten_dia_diem || "sản phẩm"}`;
+          result.hien_chi_duong = false;
+          result.google_maps_url = buildDnHaMapsUrl({
+            query: buyQuery,
+            lat: areaPoint.lat,
+            lng: areaPoint.lng,
+            locationContext
+          });
+          result.chi_duong_url = "";
+        }
+
+        return res.status(200).json(result);
+      } catch (_) {}
+    }
+
+    return res.status(502).json({ error: FRIENDLY_ERROR });
+  } catch (_) {
+    return res.status(500).json({ error: FRIENDLY_ERROR });
+  }
+};
