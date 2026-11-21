@@ -12,20 +12,17 @@ const MAX_HISTORY = 30;
 const FRIENDLY_ERROR_MSG =
   "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé😍";
 
-// File âm thanh rỗng siêu nhẹ dùng để mở khóa loa trên iPhone Safari ngay khi bấm nút
-const SILENT_WAV =
-  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
-
 let facingMode = "environment";
 let currentStream = null;
 let currentCoords = { lat: null, lng: null };
 let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
-let currentAudioUrl = null;
 
-const neuralAudio = new Audio();
-neuralAudio.preload = "auto";
+// Web Audio API + Bộ nhớ đệm tải trước giọng Hoài My
+let audioCtx = null;
+let activeSource = null;
+const ttsBufferCache = new Map();
 
 let chatHistory = [
   {
@@ -341,7 +338,7 @@ window.deleteHistoryItem = deleteHistoryItem;
 window.clearAllHistory = clearAllHistory;
 
 // ==========================================
-// 5. CAMERA, GPS & CHỈ DÙNG GIỌNG HOÀI MY NEURAL
+// 5. CAMERA, GPS & GIỌNG HOÀI MY (BẤM 1 LẦN NGHE NGAY)
 // ==========================================
 async function startCamera() {
   if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
@@ -375,6 +372,77 @@ function initGPS() {
   );
 }
 
+function normalizeTtsText(text) {
+  return String(text || "")
+    .replace(/[*#_•]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function base64ToArrayBuffer(base64) {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
+function getOrFetchTtsBuffer(cleanText) {
+  if (ttsBufferCache.has(cleanText)) {
+    return ttsBufferCache.get(cleanText);
+  }
+
+  const promise = fetch("/api/scan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ mode: "tts", text: cleanText })
+  })
+    .then(async (res) => {
+      const data = await res.json();
+      if (res.ok && data.audioBase64) {
+        return base64ToArrayBuffer(data.audioBase64);
+      }
+      throw new Error(data.ttsError || "Không tải được giọng Hoài My");
+    })
+    .catch((err) => {
+      ttsBufferCache.delete(cleanText);
+      throw err;
+    });
+
+  // Giữ tối đa 10 bản cache trong RAM
+  if (ttsBufferCache.size >= 10) {
+    const firstKey = ttsBufferCache.keys().next().value;
+    ttsBufferCache.delete(firstKey);
+  }
+  ttsBufferCache.set(cleanText, promise);
+  return promise;
+}
+
+// Tự tải ngầm giọng đọc ngay khi kết quả vừa hiện lên
+function prefetchTts(text) {
+  const cleanText = normalizeTtsText(text);
+  if (!cleanText) return;
+  getOrFetchTtsBuffer(cleanText).catch(() => {});
+}
+
+function unlockAudioContext() {
+  const AudioCtx = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtx) return null;
+  if (!audioCtx) audioCtx = new AudioCtx();
+  if (audioCtx.state === "suspended") {
+    audioCtx.resume().catch(() => {});
+  }
+  return audioCtx;
+}
+
+function decodeAudio(ctx, arrayBuffer) {
+  return new Promise((resolve, reject) => {
+    // slice(0) để giữ nguyên bản gốc trong cache nếu người dùng bấm nghe lại
+    ctx.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
+  });
+}
+
 function updateSpeakButton(playing) {
   const btn = document.getElementById("speakBtn");
   if (!btn) return;
@@ -384,25 +452,14 @@ function updateSpeakButton(playing) {
 function stopSpeaking() {
   speechSessionId++;
   isSpeaking = false;
-  neuralAudio.pause();
-  neuralAudio.onended = null;
-  neuralAudio.onerror = null;
-  neuralAudio.removeAttribute("src");
-  if (currentAudioUrl) {
-    URL.revokeObjectURL(currentAudioUrl);
-    currentAudioUrl = null;
+  if (activeSource) {
+    try {
+      activeSource.onended = null;
+      activeSource.stop();
+    } catch (_) {}
+    activeSource = null;
   }
   updateSpeakButton(false);
-}
-
-function base64ToAudioBlobUrl(base64) {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
-  const blob = new Blob([bytes], { type: "audio/mpeg" });
-  return URL.createObjectURL(blob);
 }
 
 async function speakText(text) {
@@ -411,49 +468,49 @@ async function speakText(text) {
     return;
   }
 
-  const cleanText = String(text || "")
-    .replace(/[*#_•]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  const cleanText = normalizeTtsText(text);
   if (!cleanText) return;
+
+  // Mở khóa loa NGAY LẬP TỨC trong cú chạm đầu tiên (chuẩn iOS Safari)
+  const ctx = unlockAudioContext();
+  if (!ctx) {
+    alert("Trình duyệt không hỗ trợ phát âm thanh.");
+    return;
+  }
 
   const session = ++speechSessionId;
   isSpeaking = true;
 
   const btn = document.getElementById("speakBtn");
-  if (btn) btn.textContent = "⏳ Đang tạo giọng Hoài My...";
-
-  // Mở khóa loa trên iOS Safari ngay khi chạm nút
-  neuralAudio.src = SILENT_WAV;
-  neuralAudio.play().catch(() => {});
+  if (btn) btn.textContent = "⏳ Đang tải giọng Hoài My...";
 
   try {
-    const res = await fetch("/api/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "tts", text: cleanText })
-    });
-
-    const data = await res.json();
+    const arrayBuffer = await getOrFetchTtsBuffer(cleanText);
     if (session !== speechSessionId) return;
 
-    if (res.ok && data.audioBase64) {
-      currentAudioUrl = base64ToAudioBlobUrl(data.audioBase64);
-      updateSpeakButton(true);
+    const decoded = await decodeAudio(ctx, arrayBuffer);
+    if (session !== speechSessionId) return;
 
-      await new Promise((resolve, reject) => {
-        neuralAudio.src = currentAudioUrl;
-        neuralAudio.playbackRate = 1.0;
-        neuralAudio.onended = resolve;
-        neuralAudio.onerror = reject;
-        neuralAudio.play().catch(reject);
-      });
-
-      if (session === speechSessionId) stopSpeaking();
-      return;
+    if (ctx.state === "suspended") {
+      await ctx.resume();
     }
 
-    throw new Error(data.ttsError || "Không tải được giọng Hoài My");
+    const source = ctx.createBufferSource();
+    source.buffer = decoded;
+    source.connect(ctx.destination);
+    activeSource = source;
+
+    updateSpeakButton(true);
+
+    source.onended = () => {
+      if (session === speechSessionId) {
+        activeSource = null;
+        isSpeaking = false;
+        updateSpeakButton(false);
+      }
+    };
+
+    source.start(0);
   } catch (err) {
     if (session === speechSessionId) {
       stopSpeaking();
@@ -532,6 +589,9 @@ function renderError() {
 
 function renderResult(data, timeOrElapsed, fromHistory = false) {
   currentSpeechText = `${data.ten_dia_diem || ""}. ${data.cau_chuyen_lich_su || ""} ${data.giai_thoai_dac_biet || ""}`;
+
+  // Tải trước giọng Hoài My ngay lúc bảng kết quả vừa mở
+  prefetchTts(currentSpeechText);
 
   const sp = data.thong_tin_san_pham;
   const productBlock = sp && sp.hien_thi ? `
