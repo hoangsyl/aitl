@@ -1,3 +1,9 @@
+let MsEdgeTTS = null;
+let OUTPUT_FORMAT = null;
+try {
+  ({ MsEdgeTTS, OUTPUT_FORMAT } = require("msedge-tts"));
+} catch (_) {}
+
 // Khung giới hạn địa lý cứng cho khu vực Đà Nẵng – Hội An
 const DN_HA_BOUNDS = {
   minLat: 15.70,
@@ -174,6 +180,44 @@ Hãy trả lời ngắn gọn, rõ ràng, thực tế bằng tiếng Việt.`;
   throw new Error("Chatbot tạm thời bận, bạn thử gửi lại nhé.");
 }
 
+async function generateNeuralTtsBase64(rawText) {
+  if (!MsEdgeTTS || !OUTPUT_FORMAT) return null;
+
+  const cleanText = String(rawText || "")
+    .replace(/[*#_•~`]/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
+
+  if (!cleanText) return null;
+
+  const tts = new MsEdgeTTS();
+  // Đổi thành "vi-VN-NamMinhNeural" nếu bạn thích giọng nam
+  await tts.setMetadata(
+    "vi-VN-HoaiMyNeural",
+    OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3
+  );
+
+  const streamResult = tts.toStream(cleanText);
+  const readable = streamResult.audioStream || streamResult;
+
+  return await new Promise((resolve, reject) => {
+    const chunks = [];
+    const timer = setTimeout(() => reject(new Error("TTS timeout")), 9000);
+
+    readable.on("data", (chunk) => chunks.push(chunk));
+    readable.on("end", () => {
+      clearTimeout(timer);
+      resolve(Buffer.concat(chunks).toString("base64"));
+    });
+    readable.on("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
@@ -183,8 +227,19 @@ module.exports = async (req, res) => {
 
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-    const groqKey = String(process.env.GROQ_API_KEY || "").trim();
 
+    // --- CHẾ ĐỘ ĐỌC GIỌNG HOÀI MY NEURAL (MIỄN PHÍ, KHÔNG CẦN KEY) ---
+    if (body && body.mode === "tts") {
+      try {
+        const audioBase64 = await generateNeuralTtsBase64(body.text);
+        if (audioBase64) {
+          return res.status(200).json({ audioBase64 });
+        }
+      } catch (_) {}
+      return res.status(200).json({ useNative: true });
+    }
+
+    const groqKey = String(process.env.GROQ_API_KEY || "").trim();
     if (!groqKey) {
       return res.status(400).json({ error: FRIENDLY_ERROR });
     }
@@ -214,7 +269,7 @@ Nhiệm vụ: Nhận diện chính xác đối tượng trong ảnh và phân lo
 - NHÓM ĐỊA ĐIỂM: "Di tích" | "Nhà hàng & Quán ăn" | "Shop & Workshop" | "Hán Nôm"
 - NHÓM VẬT PHẨM / THỨC ĂN: "Thức ăn & Đồ uống" | "Sản phẩm" | "Vật thể"
 
-Yêu cầu nội dung (viết văn phong kể chuyện truyền cảm, chấm phẩy rõ ràng để đọc thuyết minh thật hay):
+Yêu cầu nội dung (viết văn phong hướng dẫn viên du lịch truyền cảm, chấm phẩy rõ ràng để đọc thuyết minh thật hay):
 1. "cau_chuyen_lich_su": 2–3 câu giới thiệu rõ nguồn gốc, bối cảnh hoặc công dụng.
 2. "giai_thoai_dac_biet" (Điểm độc đáo): Viết thật hay, cuốn hút, giàu cảm xúc (4–5 câu, khoảng 80–110 từ), chấm phẩy đầy đủ, phân tích kỹ chi tiết nhìn thấy trên ảnh và giá trị đặc trưng.
 3. "thong_tin_san_pham":
