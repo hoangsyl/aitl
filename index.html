@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>AIvolution — Nhận diện đa năng Đà Nẵng & Hội An</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="camera-wrap">
+    <video id="camera" autoplay playsinline muted></video>
+    <canvas id="canvas" style="display: none;"></canvas>
+
+    <div class="top-bar">
+      <div class="brand">
+        <h1>AIvolution</h1>
+        <p>Nhận diện đa năng • Đà Nẵng – Hội An</p>
+      </div>
+      <div class="gps-badge">
+        <span id="gpsDot" class="dot"></span>
+        <span id="gpsText">Đang định vị...</span>
+      </div>
+    </div>
+
+    <div class="reticle">
+      <span class="tl"></span>
+      <span class="tr"></span>
+      <span class="bl"></span>
+      <span class="br"></span>
+    </div>
+
+    <div id="statusPill" class="status-pill">⚡ Đang phân tích nhanh...</div>
+
+    <div class="controls">
+      <button class="btn-icon" id="uploadBtn" title="Chọn ảnh từ máy">🖼️</button>
+      <button class="btn-capture" id="captureBtn" title="Chụp & Quét"></button>
+      <button class="btn-icon" id="switchBtn" title="Đổi camera">🔄</button>
+      <input type="file" id="fileInput" accept="image/*" style="display: none;" />
+    </div>
+
+    <!-- Nút Menu ở góc dưới bên phải -->
+    <button class="btn-menu" id="menuBtn" title="Menu: Lịch sử, Thời tiết, Chatbot">
+      ☰
+      <span id="historyBadge" class="history-badge" style="display: none;">0</span>
+    </button>
+  </div>
+
+  <div id="sheet" class="sheet">
+    <div class="sheet-handle"></div>
+    <div id="sheetContent"></div>
+  </div>
+
+  <script src="app.js?v=4"></script>
+</body>
+</html>
