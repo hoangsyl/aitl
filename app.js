@@ -12,6 +12,10 @@ const MAX_HISTORY = 30;
 const FRIENDLY_ERROR_MSG =
   "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé😍";
 
+// File âm thanh rỗng siêu nhẹ dùng để mở khóa loa trên iPhone Safari ngay khi bấm nút
+const SILENT_WAV =
+  "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+
 let facingMode = "environment";
 let currentStream = null;
 let currentCoords = { lat: null, lng: null };
@@ -20,10 +24,14 @@ let isSpeaking = false;
 let lockedVoice = null;
 let speechSessionId = 0;
 
+const neuralAudio = new Audio();
+neuralAudio.preload = "auto";
+
 let chatHistory = [
   {
     role: "assistant",
-    content: "Chào bạn! Mình là trợ lý AIvolution. Bạn cần hỏi đường, quán ngon Đà Nẵng – Hội An, hay thắc mắc về sản phẩm vừa quét cứ nhắn mình nhé!"
+    content:
+      "Chào bạn! Mình là trợ lý AIvolution. Bạn cần hỏi đường, quán ngon Đà Nẵng – Hội An, hay thắc mắc về sản phẩm vừa quét cứ nhắn mình nhé!"
   }
 ];
 
@@ -44,7 +52,9 @@ function saveHistoryList(list) {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
   } catch (e) {
     const slim = list.map((item, idx) => (idx > 5 ? { ...item, thumb: "" } : item));
-    try { localStorage.setItem(HISTORY_KEY, JSON.stringify(slim)); } catch (_) {}
+    try {
+      localStorage.setItem(HISTORY_KEY, JSON.stringify(slim));
+    } catch (_) {}
   }
   updateHistoryBadge();
 }
@@ -331,7 +341,7 @@ window.deleteHistoryItem = deleteHistoryItem;
 window.clearAllHistory = clearAllHistory;
 
 // ==========================================
-// 5. CAMERA, GPS & GIỌNG ĐỌC MƯỢT MÀ (KHÔNG CỨNG, KHÔNG GOOGLE)
+// 5. CAMERA, GPS & GIỌNG ĐỌC HOÀI MY NEURAL (CÓ DỰ PHÒNG MƯỢT)
 // ==========================================
 async function startCamera() {
   if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
@@ -365,28 +375,24 @@ function initGPS() {
   );
 }
 
-// Khóa 1 giọng tiếng Việt tự nhiên nhất trên thiết bị
-function getNaturalVietnameseVoice() {
+function getSingleVietnameseVoice() {
   if (lockedVoice) return lockedVoice;
   if (!("speechSynthesis" in window)) return null;
   const voices = window.speechSynthesis.getVoices();
   if (!voices || voices.length === 0) return null;
 
   const viVoices = voices.filter((v) => (v.lang || "").toLowerCase().includes("vi"));
-  if (!viVoices.length) return null;
-
   lockedVoice =
-    viVoices.find((v) => /enhanced|premium|natural|hoaimy/i.test(v.name)) ||
-    viVoices.find((v) => /linh|namminh/i.test(v.name)) ||
-    viVoices[0];
-
+    viVoices.find((v) => /enhanced|premium|hoaimy|linh/i.test(v.name)) ||
+    viVoices[0] ||
+    null;
   return lockedVoice;
 }
 
 if ("speechSynthesis" in window) {
-  getNaturalVietnameseVoice();
+  getSingleVietnameseVoice();
   window.speechSynthesis.onvoiceschanged = () => {
-    if (!lockedVoice) getNaturalVietnameseVoice();
+    if (!lockedVoice) getSingleVietnameseVoice();
   };
 }
 
@@ -399,45 +405,79 @@ function updateSpeakButton(playing) {
 function stopSpeaking() {
   speechSessionId++;
   isSpeaking = false;
+  neuralAudio.pause();
+  neuralAudio.onended = null;
+  neuralAudio.onerror = null;
+  neuralAudio.removeAttribute("src");
   if ("speechSynthesis" in window) window.speechSynthesis.cancel();
   updateSpeakButton(false);
 }
 
-// Chỉ tách theo câu trọn vẹn (. ! ?) để giữ nguyên dấu phẩy bên trong -> giọng lên xuống mềm mại, không bị giật cục
-function splitIntoNaturalSentences(text) {
-  const clean = String(text || "")
-    .replace(/[*#_•]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  if (!clean) return [];
-  const matches = clean.match(/[^.!?]+[.!?]*/g) || [clean];
-  return matches.map((s) => s.trim()).filter(Boolean);
-}
-
-function speakText(text) {
-  if (!("speechSynthesis" in window)) {
-    alert("Trình duyệt này chưa hỗ trợ đọc giọng nói.");
-    return;
-  }
-
+async function speakText(text) {
   if (isSpeaking) {
     stopSpeaking();
     return;
   }
 
-  const sentences = splitIntoNaturalSentences(text);
-  if (!sentences.length) return;
+  const cleanText = String(text || "")
+    .replace(/[*#_•]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleanText) return;
 
-  window.speechSynthesis.cancel();
   const session = ++speechSessionId;
-  const voice = getNaturalVietnameseVoice();
-
   isSpeaking = true;
-  updateSpeakButton(true);
 
-  let idx = 0;
+  const btn = document.getElementById("speakBtn");
+  if (btn) btn.textContent = "⏳ Đang tải giọng đọc...";
+
+  // Mở khóa loa trên iOS Safari ngay trong sự kiện chạm của người dùng
+  neuralAudio.src = SILENT_WAV;
+  neuralAudio.play().catch(() => {});
+
+  try {
+    const res = await fetch("/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "tts", text: cleanText })
+    });
+
+    if (res.ok && session === speechSessionId) {
+      const data = await res.json();
+      if (data.audioBase64) {
+        updateSpeakButton(true);
+        await new Promise((resolve, reject) => {
+          neuralAudio.src = `data:audio/mpeg;base64,${data.audioBase64}`;
+          neuralAudio.playbackRate = 1.0;
+          neuralAudio.onended = resolve;
+          neuralAudio.onerror = reject;
+          neuralAudio.play().catch(reject);
+        });
+        if (session === speechSessionId) {
+          isSpeaking = false;
+          updateSpeakButton(false);
+        }
+        return;
+      }
+    }
+  } catch (_) {}
+
+  // Dự phòng giọng máy nếu mạng yếu hoặc server TTS bận
+  if (session !== speechSessionId) return;
+  if (!("speechSynthesis" in window)) {
+    isSpeaking = false;
+    updateSpeakButton(false);
+    return;
+  }
+
+  updateSpeakButton(true);
+  window.speechSynthesis.cancel();
+  const sentences = cleanText.match(/[^.!?]+[.!?]*/g) || [cleanText];
+  const voice = getSingleVietnameseVoice();
+
+  let index = 0;
   function speakNext() {
-    if (session !== speechSessionId || !isSpeaking || idx >= sentences.length) {
+    if (session !== speechSessionId || !isSpeaking || index >= sentences.length) {
       if (session === speechSessionId) {
         isSpeaking = false;
         updateSpeakButton(false);
@@ -445,15 +485,15 @@ function speakText(text) {
       return;
     }
 
-    const utter = new SpeechSynthesisUtterance(sentences[idx]);
+    const utter = new SpeechSynthesisUtterance(sentences[index].trim());
     utter.lang = "vi-VN";
     if (voice) utter.voice = voice;
-    utter.rate = 0.95; // Tốc độ kể chuyện tự nhiên
-    utter.pitch = 1.0; // Giữ cao độ gốc để giọng không bị méo/kim loại
+    utter.rate = 0.96;
+    utter.pitch = 1.04;
 
     utter.onend = () => {
-      idx++;
-      setTimeout(speakNext, 260); // Nghỉ nhịp nhẹ giữa các câu
+      index++;
+      speakNext();
     };
     utter.onerror = () => {
       if (session === speechSessionId) {
