@@ -12,12 +12,39 @@ const DN_HA_BOUNDS = {
 const FRIENDLY_ERROR =
   "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé.";
 
-// Bộ nhớ đệm trên Serverless (giữ lại giữa các lần quét để tăng tốc & tránh gọi lặp)
+// Bộ nhớ đệm trên Serverless
 let cachedAllModels = null;
 let cachedModelsAt = 0;
 let lastWorkingVisionModel = null;
+let keyCursor = 0;
 const badVisionModels = new Set();
 const MODELS_CACHE_TTL = 10 * 60 * 1000; // 10 phút
+
+// Gom tất cả API Key từ GROQ_API_KEY (cách nhau dấu phẩy/xuống dòng) và GROQ_API_KEY_1..10
+function getGroqApiKeys() {
+  const rawList = [];
+
+  if (process.env.GROQ_API_KEY) {
+    rawList.push(...String(process.env.GROQ_API_KEY).split(/[\s,;]+/));
+  }
+
+  for (let i = 1; i <= 10; i++) {
+    const val = process.env[`GROQ_API_KEY_${i}`];
+    if (val) rawList.push(...String(val).split(/[\s,;]+/));
+  }
+
+  const uniqueKeys = [...new Set(rawList.map((k) => k.trim()).filter(Boolean))];
+  if (uniqueKeys.length <= 1) return uniqueKeys;
+
+  // Xoay vòng vị trí bắt đầu để chia đều lượt gọi cho các key
+  const start = keyCursor % uniqueKeys.length;
+  keyCursor = (keyCursor + 1) % uniqueKeys.length;
+  return [...uniqueKeys.slice(start), ...uniqueKeys.slice(0, start)];
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 
 function clampToDaNangHoiAn(lat, lng, locationContext = "") {
   const numLat = Number(lat);
@@ -120,7 +147,6 @@ async function fetchWorkingGroqModels(apiKey) {
 }
 
 function getOrderedVisionModels(liveModels) {
-  // Loại bỏ các model chắc chắn chỉ đọc chữ để tránh lỗi HTTP 400
   const textOnlyPattern = /gpt-oss|deepseek|mixtral|llama-3\.1|llama-3\.3|llama3-|allam|gemma2/i;
   const visionPattern = /vision|vl|scout|maverick|llama-4|llama-5|omni|multimodal|pixtral|kimi|qwen/i;
 
@@ -132,7 +158,6 @@ function getOrderedVisionModels(liveModels) {
   const secondary = filtered.filter((m) => !visionPattern.test(m));
   const list = [...primary, ...secondary];
 
-  // Đưa model chạy ngon nhất gần đây lên đầu tiên để quét trong 1 lần gọi
   if (lastWorkingVisionModel && list.includes(lastWorkingVisionModel)) {
     return [lastWorkingVisionModel, ...list.filter((m) => m !== lastWorkingVisionModel)];
   }
@@ -187,45 +212,59 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
   }
 }
 
-// Gọi tuần tự thông minh: không spam nhiều model cùng lúc gây 429, nhớ model chạy tốt để tăng tốc
-async function runVisionSmart({ apiKey, prompt, imageBase64 }) {
-  const liveModels = await fetchWorkingGroqModels(apiKey);
-  const candidates = getOrderedVisionModels(liveModels);
+async function runVisionSmart({ apiKeys, prompt, imageBase64 }) {
   const errors = [];
 
-  for (const model of candidates.slice(0, 5)) {
+  for (let k = 0; k < apiKeys.length; k++) {
+    const apiKey = apiKeys[k];
+    let liveModels;
     try {
-      const result = await callGroqVision({
-        apiKey,
-        model,
-        prompt,
-        imageBase64,
-        timeoutMs: 6500
-      });
-      if (result && typeof result === "object") {
-        lastWorkingVisionModel = model;
-        return result;
-      }
+      liveModels = await fetchWorkingGroqModels(apiKey);
     } catch (err) {
-      errors.push(err.message || `${model}: Failed`);
-      // Nếu model báo 400 (không hỗ trợ ảnh) hoặc 404 (đã gỡ), loại khỏi danh sách các lần sau
-      if (err.status === 400 || err.status === 404) {
-        badVisionModels.add(model);
-        if (lastWorkingVisionModel === model) lastWorkingVisionModel = null;
+      errors.push(`Key#${k + 1}: ${err.message}`);
+      continue;
+    }
+
+    const candidates = getOrderedVisionModels(liveModels);
+
+    for (const model of candidates.slice(0, 4)) {
+      try {
+        const result = await callGroqVision({
+          apiKey,
+          model,
+          prompt,
+          imageBase64,
+          timeoutMs: 6500
+        });
+        if (result && typeof result === "object") {
+          lastWorkingVisionModel = model;
+          return result;
+        }
+      } catch (err) {
+        errors.push(err.message || `${model}: Failed`);
+        if (err.status === 400 || err.status === 404) {
+          badVisionModels.add(model);
+          if (lastWorkingVisionModel === model) lastWorkingVisionModel = null;
+          continue;
+        }
+        // Nếu dính 429 hoặc 401 trên key này -> chuyển ngay sang key tiếp theo
+        if (err.status === 429 || err.status === 401) {
+          if (apiKeys.length === 1 && err.status === 429) {
+            await sleep(1500);
+          }
+          break;
+        }
       }
     }
   }
 
-  throw new Error(errors.slice(0, 3).join(" | ") || "Không có model đọc ảnh nào phản hồi");
+  const isRateLimit = errors.some((e) => e.includes("429"));
+  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Không có model đọc ảnh nào phản hồi");
+  finalErr.isRateLimit = isRateLimit;
+  throw finalErr;
 }
 
-async function handleChatMode({ apiKey, messages, locationContext }) {
-  const models = await fetchWorkingGroqModels(apiKey);
-  const sortedModels = [
-    ...models.filter((m) => /llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m)),
-    ...models.filter((m) => !/llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m))
-  ];
-
+async function handleChatMode({ apiKeys, messages, locationContext }) {
   const systemPrompt = `Bạn là trợ lý AIvolution thông minh, thân thiện và am hiểu sâu sắc khu vực Đà Nẵng – Hội An.
 Vị trí hiện tại của người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
 Hãy trả lời ngắn gọn, chính xác, thực tế bằng tiếng Việt.`;
@@ -235,26 +274,41 @@ Hãy trả lời ngắn gọn, chính xác, thực tế bằng tiếng Việt.`;
     ...(Array.isArray(messages) ? messages.slice(-10) : [])
   ];
 
-  for (const model of sortedModels.slice(0, 4)) {
+  for (const apiKey of apiKeys) {
+    let models;
     try {
-      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          model,
-          temperature: 0.4,
-          max_tokens: 500,
-          messages: chatMessages
-        })
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const reply = data.choices?.[0]?.message?.content?.trim();
-      if (reply) return reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
-    } catch (_) {}
+      models = await fetchWorkingGroqModels(apiKey);
+    } catch (_) {
+      continue;
+    }
+
+    const sortedModels = [
+      ...models.filter((m) => /llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m)),
+      ...models.filter((m) => !/llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m))
+    ];
+
+    for (const model of sortedModels.slice(0, 3)) {
+      try {
+        const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`
+          },
+          body: JSON.stringify({
+            model,
+            temperature: 0.4,
+            max_tokens: 500,
+            messages: chatMessages
+          })
+        });
+        if (res.status === 429 || res.status === 401) break;
+        if (!res.ok) continue;
+        const data = await res.json();
+        const reply = data.choices?.[0]?.message?.content?.trim();
+        if (reply) return reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+      } catch (_) {}
+    }
   }
   throw new Error("Chatbot tạm thời bận, bạn thử gửi lại nhé.");
 }
@@ -566,8 +620,8 @@ module.exports = async (req, res) => {
       }
     }
 
-    const groqKey = String(process.env.GROQ_API_KEY || "").trim();
-    if (!groqKey) {
+    const groqKeys = getGroqApiKeys();
+    if (!groqKeys.length) {
       return res.status(400).json({
         error: FRIENDLY_ERROR,
         debug: "Thiếu biến GROQ_API_KEY trên Vercel"
@@ -577,7 +631,7 @@ module.exports = async (req, res) => {
     // --- CHẾ ĐỘ CHATBOT ---
     if (body.mode === "chat") {
       const reply = await handleChatMode({
-        apiKey: groqKey,
+        apiKeys: groqKeys,
         messages: body.messages,
         locationContext: body.locationContext
       });
@@ -634,7 +688,7 @@ CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không kèm chữ bên ngoài):
 Lưu ý: Nếu là NHÓM VẬT PHẨM / THỨC ĂN thì đặt "la_dia_diem": false và "thong_tin_san_pham.hien_thi": true rồi điền đầy đủ các mục bên trong.`;
 
     const result = await runVisionSmart({
-      apiKey: groqKey,
+      apiKeys: groqKeys,
       prompt,
       imageBase64
     });
@@ -680,8 +734,10 @@ Lưu ý: Nếu là NHÓM VẬT PHẨM / THỨC ĂN thì đặt "la_dia_diem": fa
 
     return res.status(200).json(result);
   } catch (err) {
-    return res.status(502).json({
-      error: FRIENDLY_ERROR,
+    return res.status(err?.isRateLimit ? 429 : 502).json({
+      error: err?.isRateLimit
+        ? "AI đang chạm giới hạn lượt quét miễn phí (HTTP 429). Bạn đợi 15–30 giây rồi bấm Quét lại nhé!"
+        : FRIENDLY_ERROR,
       debug: err?.message || "Lỗi xử lý máy chủ"
     });
   }
