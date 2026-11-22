@@ -1,25 +1,25 @@
 /**
+ * AIvolution Team
  * 
- * Bản quyền thuộc về AIvolution Team
- *  
- * Bản quyền thuộc về AIvolution Team
- *  
+ *  - 
+ *  Bảng quyền thuộc về AIvolution Team
+ *  -
  */
 
 const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG & HẰNG SỐ (TỐI ƯU TỐC ĐỘ)
+// 1. CẤU HÌNH HỆ THỐNG & HẰNG SỐ (ỔN ĐỊNH + NHANH)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
   GEMINI_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  GEMINI_TIMEOUT_MS: 9500,
-  GROQ_TIMEOUT_MS: 7000,
+  GEMINI_TIMEOUT_MS: 14000,
+  GROQ_TIMEOUT_MS: 7500,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 10 * 60 * 1000,
-  KEY_COOLDOWN_MS: 60 * 1000,
+  KEY_COOLDOWN_MS: 45 * 1000,
   FRIENDLY_ERROR:
     "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ, bị mờ hoặc thiếu sáng. Bạn giữ chắc tay và chụp rõ hơn giúp mình nhé!"
 };
@@ -64,6 +64,10 @@ function collectApiKeys(prefix) {
 
 function markKeyCooldown(apiKey, ms = CONFIG.KEY_COOLDOWN_MS) {
   runtimeState.keyCooldownUntil.set(apiKey, Date.now() + ms);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // ==========================================
@@ -291,7 +295,7 @@ Với món ăn, đồ uống hoặc sản phẩm: đặt "la_dia_diem": false v�
 // ==========================================
 // 5. TẦNG 1: GEMINI FREE (GOOGLE AI STUDIO)
 // ==========================================
-async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
+async function callGeminiVisionOnce({ apiKey, model, prompt, imageBase64 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CONFIG.GEMINI_TIMEOUT_MS);
 
@@ -341,8 +345,26 @@ async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
     const content = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!content) throw new Error(`Gemini(${model}): Empty content`);
     return extractJson(content);
+  } catch (err) {
+    if (err.name === "AbortError") {
+      const timeoutErr = new Error(`Gemini(${model}) timeout (${CONFIG.GEMINI_TIMEOUT_MS}ms)`);
+      timeoutErr.isRetryable = true;
+      throw timeoutErr;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
+  try {
+    return await callGeminiVisionOnce({ apiKey, model, prompt, imageBase64 });
+  } catch (err) {
+    const retryable = err.status === 503 || err.status === 500 || err.isRetryable;
+    if (!retryable) throw err;
+    await sleep(350);
+    return await callGeminiVisionOnce({ apiKey, model, prompt, imageBase64 });
   }
 }
 
@@ -359,7 +381,9 @@ async function runGeminiVision({ apiKeys, prompt, imageBase64 }) {
       } catch (err) {
         errors.push(err.message || `Gemini(${model}): Failed`);
         if (err.status === 429) markKeyCooldown(apiKey);
-        if ([400, 401, 403, 404, 429].includes(err.status)) continue;
+        if ([400, 401, 403, 404, 429, 500, 503].includes(err.status) || err.isRetryable) {
+          continue;
+        }
       }
     }
   }
