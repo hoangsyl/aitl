@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG 
+// 1. CẤU HÌNH HỆ THỐNG (TỐI ƯU TỐC ĐỘ 2.5–4s)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -16,10 +16,11 @@ const CONFIG = {
     "meta-llama/llama-4-maverick-17b-128e-instruct"
   ],
   GEMINI_BACKUP_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  GROQ_ATTEMPT_TIMEOUT_MS: 4500,
-  GROQ_MODELS_TIMEOUT_MS: 1800,
-  GEMINI_BACKUP_TIMEOUT_MS: 5000,
-  CHAT_TIMEOUT_MS: 5000,
+  GROQ_ATTEMPT_TIMEOUT_MS: 3800,
+  GROQ_MODELS_TIMEOUT_MS: 1500,
+  SERPER_TIMEOUT_MS: 1100,
+  GEMINI_BACKUP_TIMEOUT_MS: 4800,
+  CHAT_TIMEOUT_MS: 4500,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 15 * 60 * 1000,
   KEY_COOLDOWN_429_MS: 60 * 1000,
@@ -28,7 +29,6 @@ const CONFIG = {
     "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ, bị mờ hoặc thiếu sáng. Bạn giữ chắc tay và chụp rõ hơn giúp mình nhé!"
 };
 
-// Bộ nhớ đệm giữ trạng thái model/key khỏe trên Serverless instance
 const runtimeState = {
   cachedGroqModels: null,
   cachedGroqModelsAt: 0,
@@ -73,7 +73,7 @@ function markKeyCooldown(apiKey, ms = CONFIG.KEY_COOLDOWN_429_MS) {
   if (runtimeState.lastWorkingGroqKey === apiKey) runtimeState.lastWorkingGroqKey = null;
 }
 
-function fetchWithTimeout(url, options = {}, timeoutMs = 4500) {
+function fetchWithTimeout(url, options = {}, timeoutMs = 3800) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(800, timeoutMs));
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
@@ -184,7 +184,6 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
     ? data.danh_gia_ban_dia
     : {};
 
-  // Chặn triệt để trường hợp AI điền "Không áp dụng" vào tên sản phẩm/đối tượng
   let ten = String(data.ten_dia_diem || "").trim();
   if (!ten || /^(không áp dụng|chưa xác định|n\/a|none|null)$/i.test(ten)) {
     const chiTiet = String(sp.chi_tiet_san_pham || data.cau_chuyen_lich_su || "").trim();
@@ -268,45 +267,34 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 }
 
 // ==========================================
-// 4. PROMPT CHUẨN XÁC TUYỆT ĐỐI – GIÁ & CALO 99% – KHÔNG BỊA
+// 4. PROMPT GỌN NHANH – CHUẨN XÁC – KHÔNG BỊA
 // ==========================================
 function buildVisionPrompt(locationContext) {
-  return `Bạn là hệ thống nhận diện hình ảnh chính xác, trung thực tuyệt đối cho ứng dụng AIvolution.
-Ngữ cảnh: ${locationContext || "Đà Nẵng – Hội An"}.
+  return `Hệ thống nhận diện hình ảnh chính xác, trung thực cho AIvolution. Ngữ cảnh: ${locationContext || "Đà Nẵng – Hội An"}.
 
-NGUYÊN TẮC TRUNG THỰC TUYỆT ĐỐI (BẮT BUỘC):
-1. CHỈ nhận diện đúng đối tượng NHÌN THẤY RÕ trong ảnh kết hợp kiến thức xác thực.
-2. KHÔNG BỊA ĐẶT:
-   - Không bịa tên hãng/thương hiệu nếu không đọc rõ chữ/logo trong ảnh.
-   - Không bịa niên đại, số liệu, tên quán cụ thể không có thật.
-   - KHÔNG gượng ép gắn đồ vật thường ngày (bình nước, bàn phím, quạt, chuột...) vào Đà Nẵng – Hội An. Chỉ liên hệ Đà Nẵng – Hội An khi thực sự là địa danh, di tích hoặc đặc sản vùng này.
-3. CHUẨN XÁC GIÁ TIỀN & CALO 99%:
-   - Đọc kỹ nhãn bao bì / Nutrition Facts / tem giá nếu có trong ảnh.
-   - Calo món ăn/đồ uống: cộng từng thành phần nhìn thấy theo định lượng chuẩn Viện Dinh Dưỡng, xuất khoảng dao động hẹp sát thực tế (VD: "420 - 480 kcal", "140 - 160 kcal/lon 330ml"). Với đồ vật KHÔNG ăn/uống được BẮT BUỘC ghi "Không áp dụng".
-   - Giá tiền VNĐ: nếu thấy tem giá ghi đúng giá đó; nếu là hàng tiêu dùng/món ăn phổ thông tại Việt Nam đối chiếu đúng dung tích, chất liệu, phân khúc để ghi khoảng giá bán lẻ thực tế (VD: "10.000 - 15.000 VNĐ", "35.000 - 50.000 VNĐ", "50.000 - 95.000 VNĐ"). Nếu không thể định giá từ ảnh ghi "Tùy thương hiệu & nơi bán".
-4. PHÂN BIỆT ẨM THỰC MIỀN TRUNG:
-   - Cao lầu: sợi mì dày vuông vàng/nâu, xá xíu, ram giòn, ít nước xốt, KHÔNG đậu phộng.
-   - Mì Quảng: sợi mì dẹt bản to, có đậu phộng rang, bánh tráng mè, nước dùng ít.
-5. HÁN – NÔM: Chỉ bật "co_han_viet": true khi ảnh thực sự có chữ Hán/Nôm rõ nét.
-6. Chỉ trả "khong_nhan_dien_duoc": true khi ảnh tối đen hoặc nhòe hoàn toàn.
-7. VIẾT SÚC TÍCH (2–3 câu mỗi mục) và CHỈ TRẢ VỀ JSON HỢP LỆ:
+QUY TẮC BẮT BUỘC:
+1. Chỉ mô tả đúng đối tượng nhìn thấy rõ trong ảnh. KHÔNG bịa thương hiệu nếu không đọc rõ chữ/logo, KHÔNG gượng ép gắn đồ vật thường ngày vào Đà Nẵng – Hội An.
+2. Calo: chỉ tính cho món ăn/đồ uống theo bao bì hoặc định lượng thực tế (VD: "420 - 480 kcal"). Đồ vật không ăn được BẮT BUỘC ghi "Không áp dụng".
+3. Giá VNĐ: ghi đúng giá trên tem (nếu có) hoặc khoảng giá bán lẻ thực tế tại Việt Nam (VD: "35.000 - 50.000 VNĐ").
+4. Ẩm thực: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
+5. Viết ngắn gọn 1–2 câu mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ:
 
 {
   "khong_nhan_dien_duoc": false,
   "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": false,
-  "ten_dia_diem": "BẮT BUỘC ghi tên gọi cụ thể của sản phẩm, món ăn, vật thể hoặc địa điểm (VD: 'Xịt dưỡng tóc Akuma Hair Spray Tonic', 'Mì Quảng gà'). TUYỆT ĐỐI KHÔNG ghi 'Không áp dụng' ở trường này.",
-  "dia_chi": "Địa chỉ thật nếu là địa điểm xác định được, ngược lại ghi 'Không áp dụng'",
-  "nien_dai_hoac_gia": "Giá trên tem hoặc khoảng giá bán lẻ thực tế tại Việt Nam bằng VNĐ (VD: 35.000 - 50.000 VNĐ); nếu không thể định giá ghi 'Tùy thương hiệu & nơi bán'.",
-  "cau_chuyen_lich_su": "2-3 câu chính xác về bản chất, công dụng hoặc nguồn gốc xác thực.",
-  "giai_thoai_dac_biet": "2-3 câu mô tả đúng chi tiết thực tế thấy trong ảnh (màu sắc, hình dáng, chất liệu).",
+  "ten_dia_diem": "BẮT BUỘC ghi tên gọi cụ thể của sản phẩm, món ăn, vật thể hoặc địa điểm. KHÔNG ghi 'Không áp dụng'.",
+  "dia_chi": "Địa chỉ thật nếu là địa điểm, ngược lại ghi 'Không áp dụng'",
+  "nien_dai_hoac_gia": "Khoảng giá bán lẻ VNĐ thực tế tại Việt Nam hoặc niên đại nếu là di tích",
+  "cau_chuyen_lich_su": "1-2 câu chính xác về bản chất, công dụng hoặc nguồn gốc.",
+  "giai_thoai_dac_biet": "1-2 câu mô tả chi tiết thực tế thấy trong ảnh (màu sắc, chất liệu, hình dáng).",
   "thong_tin_san_pham": {
     "hien_thi": true,
-    "calo_uoc_tinh": "Số kcal đọc từ bao bì hoặc tính theo định lượng thực tế; đồ vật ghi 'Không áp dụng'",
-    "tot_cho_suc_khoe": "1-2 câu thực tế về dinh dưỡng hoặc lưu ý sử dụng an toàn.",
-    "chi_tiet_san_pham": "Chất liệu/thành phần thấy rõ hoặc đặc trưng phổ biến nhất.",
-    "noi_mua_goi_y": "Loại cửa hàng phổ biến (VD: Siêu thị, cửa hàng thể thao, chợ truyền thống...).",
-    "tu_khoa_mua_hang": "Từ khóa tìm kiếm ngắn gọn trên Google Maps"
+    "calo_uoc_tinh": "Số kcal thực tế nếu là đồ ăn/uống; đồ vật ghi 'Không áp dụng'",
+    "tot_cho_suc_khoe": "1 câu thực tế về dinh dưỡng hoặc lưu ý sử dụng.",
+    "chi_tiet_san_pham": "Chất liệu/thành phần nổi bật.",
+    "noi_mua_goi_y": "Loại cửa hàng phổ biến (VD: Siêu thị, cửa hàng thể thao...).",
+    "tu_khoa_mua_hang": "Từ khóa Google Maps"
   },
   "han_viet": {
     "co_han_viet": false,
@@ -316,14 +304,14 @@ NGUYÊN TẮC TRUNG THỰC TUYỆT ĐỐI (BẮT BUỘC):
     "y_nghia_tong_the": ""
   },
   "danh_gia_ban_dia": {
-    "tom_tat": "1-2 câu đánh giá khách quan về ưu điểm thực tế.",
-    "review_mau": ["Ưu điểm thực tế 1", "Lưu ý thực tế 2"]
+    "tom_tat": "1 câu đánh giá khách quan.",
+    "review_mau": ["Ưu điểm thực tế", "Lưu ý thực tế"]
   }
 }`;
 }
 
 // ==========================================
-// 5. TẦNG 1: GROQ LPU (ENGINE CHÍNH – TỐC ĐỘ 2–4 GIÂY)
+// 5. TẦNG 1: GROQ LPU (GỌI THẲNG SCOUT – SIÊU NHANH)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -359,7 +347,7 @@ async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIM
 
 function getOrderedGroqVisionModels(liveModels = []) {
   const textOnly = /gpt-oss|deepseek|mixtral|llama-3\.1|llama-3\.3|llama3-|allam|gemma2/i;
-  const visionPriority = /vision|vl|maverick|scout|llama-4|llama-5|omni|multimodal|pixtral|kimi|qwen/i;
+  const visionPriority = /vision|vl|scout|maverick|llama-4|llama-5|omni|multimodal|pixtral|kimi|qwen/i;
 
   const merged = [...new Set([...CONFIG.GROQ_VISION_PRIORITY, ...liveModels])];
   const filtered = merged.filter(
@@ -394,7 +382,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 760,
+        max_tokens: 500,
         messages: [
           {
             role: "user",
@@ -428,90 +416,40 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
 
 async function runGroqVision({ apiKeys, prompt, imageBase64 }) {
   const errors = [];
+  const models = getOrderedGroqVisionModels(runtimeState.cachedGroqModels || []).slice(0, 2);
 
   for (const apiKey of apiKeys) {
-    let fastCandidates = getOrderedGroqVisionModels(runtimeState.cachedGroqModels || []).slice(0, 2);
-
-    if (fastCandidates.length) {
+    for (const model of models) {
       try {
-        const winner = await Promise.any(
-          fastCandidates.map(async (model) => {
-            try {
-              const result = await callGroqVision({
-                apiKey,
-                model,
-                prompt,
-                imageBase64,
-                timeoutMs: CONFIG.GROQ_ATTEMPT_TIMEOUT_MS
-              });
-              if (result && typeof result === "object") {
-                return { result, model };
-              }
-              throw new Error("Empty result");
-            } catch (err) {
-              if (err.status === 400 || err.status === 404) {
-                runtimeState.badGroqVisionModels.add(model);
-                if (runtimeState.lastWorkingGroqVision === model) {
-                  runtimeState.lastWorkingGroqVision = null;
-                }
-              } else if (err.status === 429 || err.status === 401 || err.status === 403) {
-                markKeyCooldown(
-                  apiKey,
-                  err.status === 429 ? CONFIG.KEY_COOLDOWN_429_MS : CONFIG.KEY_COOLDOWN_AUTH_MS
-                );
-              }
-              throw err;
-            }
-          })
-        );
-
-        runtimeState.lastWorkingGroqVision = winner.model;
-        runtimeState.lastWorkingGroqKey = apiKey;
-        return { result: winner.result, provider: `groq:${winner.model}` };
-      } catch (aggErr) {
-        const list = Array.isArray(aggErr?.errors) ? aggErr.errors : [aggErr];
-        errors.push(...list.map((e) => e?.message || "Groq fast race failed"));
-        if (list.some((e) => e?.status === 429 || e?.status === 401 || e?.status === 403)) {
+        const result = await callGroqVision({
+          apiKey,
+          model,
+          prompt,
+          imageBase64,
+          timeoutMs: CONFIG.GROQ_ATTEMPT_TIMEOUT_MS
+        });
+        if (result && typeof result === "object") {
+          runtimeState.lastWorkingGroqVision = model;
+          runtimeState.lastWorkingGroqKey = apiKey;
+          return { result, provider: `groq:${model}` };
+        }
+      } catch (err) {
+        errors.push(err.message || `Groq(${model}): Failed`);
+        if (err.status === 400 || err.status === 404) {
+          runtimeState.badGroqVisionModels.add(model);
+          if (runtimeState.lastWorkingGroqVision === model) {
+            runtimeState.lastWorkingGroqVision = null;
+          }
           continue;
         }
-      }
-    }
-
-    try {
-      const liveModels = await fetchWorkingGroqModels(apiKey);
-      const fallbackCandidates = getOrderedGroqVisionModels(liveModels)
-        .filter((m) => !fastCandidates.includes(m))
-        .slice(0, 2);
-
-      for (const model of fallbackCandidates) {
-        try {
-          const result = await callGroqVision({
+        if (err.status === 429 || err.status === 401 || err.status === 403) {
+          markKeyCooldown(
             apiKey,
-            model,
-            prompt,
-            imageBase64,
-            timeoutMs: CONFIG.GROQ_ATTEMPT_TIMEOUT_MS
-          });
-          if (result && typeof result === "object") {
-            runtimeState.lastWorkingGroqVision = model;
-            runtimeState.lastWorkingGroqKey = apiKey;
-            return { result, provider: `groq:${model}` };
-          }
-        } catch (err) {
-          errors.push(err.message || `Groq(${model}): Failed`);
-          if (err.status === 400 || err.status === 404) {
-            runtimeState.badGroqVisionModels.add(model);
-          } else if (err.status === 429 || err.status === 401 || err.status === 403) {
-            markKeyCooldown(
-              apiKey,
-              err.status === 429 ? CONFIG.KEY_COOLDOWN_429_MS : CONFIG.KEY_COOLDOWN_AUTH_MS
-            );
-            break;
-          }
+            err.status === 429 ? CONFIG.KEY_COOLDOWN_429_MS : CONFIG.KEY_COOLDOWN_AUTH_MS
+          );
+          break;
         }
       }
-    } catch (err) {
-      errors.push(err.message);
     }
   }
 
@@ -557,7 +495,7 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên q
             body: JSON.stringify({
               model,
               temperature: 0.3,
-              max_tokens: 600,
+              max_tokens: 550,
               messages: chatMessages
             })
           },
@@ -586,7 +524,7 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên q
 }
 
 // ==========================================
-// 6. TẦNG 2: GEMINI DỰ PHÒNG (CHỈ CHẠY KHI GROQ BẬN/HẾT HẠN MỨC)
+// 6. TẦNG 2: GEMINI DỰ PHÒNG
 // ==========================================
 async function runGeminiBackupVision({ apiKeys, prompt, imageBase64 }) {
   const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
@@ -599,7 +537,7 @@ async function runGeminiBackupVision({ apiKeys, prompt, imageBase64 }) {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
         const generationConfig = {
           temperature: 0.1,
-          maxOutputTokens: 760,
+          maxOutputTokens: 550,
           responseMimeType: "application/json"
         };
         if (model.includes("3.8-flash")) {
@@ -664,7 +602,7 @@ Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác; không
     for (const apiKey of apiKeys.slice(0, 2)) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = { temperature: 0.3, maxOutputTokens: 600 };
+        const generationConfig = { temperature: 0.3, maxOutputTokens: 550 };
         if (model.includes("3.8-flash")) {
           generationConfig.thinkingConfig = { thinkingBudget: 0 };
         }
@@ -970,7 +908,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 7.5 TỰ ĐỘNG TRA GIÁ THẬT TRÊN GOOGLE (SERPER API)
+// 7.5 TRA GIÁ THẬT TRÊN GOOGLE (SERPER – XOAY VÒNG KEY – MAX 1.1s)
 // ==========================================
 async function fetchRealPriceFromGoogle(productName) {
   const apiKeys = collectApiKeys("SERPER_API_KEY");
@@ -990,15 +928,15 @@ async function fetchRealPriceFromGoogle(productName) {
             q: `giá ${productName} chính hãng`,
             gl: "vn",
             hl: "vi",
-            num: 6
+            num: 4
           })
         },
-        2000
+        CONFIG.SERPER_TIMEOUT_MS
       );
 
       if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 429) {
         markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
-        continue; // Hết credit hoặc lỗi key -> nhảy ngay sang key kế tiếp
+        continue;
       }
       if (!res.ok) continue;
 
@@ -1044,7 +982,7 @@ async function fetchRealPriceFromGoogle(productName) {
 }
 
 // ==========================================
-// 8. ENTRY POINT SERVERLESS HANDLER (GROQ CHÍNH -> GEMINI DỰ PHÒNG)
+// 8. ENTRY POINT SERVERLESS HANDLER
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1143,7 +1081,7 @@ module.exports = async (req, res) => {
       return res.status(422).json(finalPayload);
     }
 
-    // Nếu là sản phẩm / đồ uống / vật thể -> tự động tra giá thật trên Google
+    // Tự động tra giá thật trên Google trong tối đa 1.1s
     if (!finalPayload.la_dia_diem && finalPayload.ten_dia_diem) {
       const realPrice = await fetchRealPriceFromGoogle(finalPayload.ten_dia_diem);
       if (realPrice) {
