@@ -295,6 +295,16 @@ NGUYÊN TẮC TRUNG THỰC TUYỆT ĐỐI (BẮT BUỘC):
 5. HÁN – NÔM: Chỉ bật "co_han_viet": true khi ảnh thực sự có chữ Hán/Nôm nhìn rõ nét; tuyệt đối không tự bịa chữ.
 6. Chỉ trả "khong_nhan_dien_duoc": true khi ảnh tối đen, nhòe nặng hoặc không thấy chủ thể.
 7. VIẾT SÚC TÍCH, MẠCH LẠC (2–3 câu mỗi mục) để tốc độ phản hồi nhanh dưới 5 giây.
+8. CHUẨN XÁC GIÁ TIỀN & CALO 99% (TUYỆT ĐỐI KHÔNG BỊA):
+   - ĐỌC KỸ BAO BÌ / NHÃN MÁC TRƯỚC: Nếu ảnh chụp thực phẩm đóng gói, nước uống, đồ dùng có in bảng Nutrition Facts (kcal/100ml hoặc kcal/gói), dung tích (ml/g), hoặc tem giá/bảng giá: BẮT BUỘC đọc đúng con số in trên bao bì và nhân theo đúng khối lượng/dung tích thực tế.
+   - TÍNH CALO MÓN ĂN CHẾ BIẾN THEO ĐỊNH LƯỢNG CHUẨN VIỆN DINH DƯỠNG:
+     + Cộng từng nguyên liệu nhìn thấy trong tô/đĩa (VD: 150g sợi mì/bún ~170-200 kcal + 60g thịt/tôm ~100-130 kcal + nước dùng/dầu mỡ/topping ~100-150 kcal).
+     + Chỉ xuất khoảng dao động hẹp thực tế (sai số tối đa 50-80 kcal, VD: "420 - 480 kcal", "140 - 160 kcal/lon 330ml").
+     + Với đồ vật KHÔNG ăn/uống được (bình nước, điện thoại, bàn phím, quần áo...): BẮT BUỘC ghi chính xác "Không áp dụng".
+   - TÍNH GIÁ TIỀN THAM KHẢO SÁT THỊ TRƯỜNG VIỆT NAM (VNĐ):
+     + Nếu thấy bảng giá/tem giá trong ảnh: ghi đúng giá trên ảnh.
+     + Nếu là hàng tiêu dùng/đồ uống/món ăn phổ thông tại Việt Nam (đặc biệt khu vực Đà Nẵng – Hội An): đối chiếu đúng dung tích, chất liệu, phân khúc bình dân hay thương hiệu để đưa khoảng giá bán lẻ thực tế sát nhất (VD: nước ngọt lon 10.000 - 15.000 VNĐ; tô mì Quảng/cao lầu bình dân 30.000 - 50.000 VNĐ; bình lắc nhựa PP 500-700ml phổ thông 45.000 - 95.000 VNĐ).
+     + Nếu là đồ vật đặc thù/không thể định giá chính xác từ ảnh (đồ tự chế, linh kiện lẻ, tài liệu): ghi rõ "Tùy thương hiệu & nơi bán", KHÔNG tự bịa số tiền ảo.
 
 CHỈ TRẢ VỀ JSON HỢP LỆ (không thêm chữ ngoài JSON):
 {
@@ -303,12 +313,12 @@ CHỈ TRẢ VỀ JSON HỢP LỆ (không thêm chữ ngoài JSON):
   "la_dia_diem": false,
   "ten_dia_diem": "Tên chính xác, trung thực (không bịa hãng nếu không thấy chữ)",
   "dia_chi": "Địa chỉ thật nếu là địa điểm xác định được, ngược lại ghi 'Không áp dụng'",
-  "nien_dai_hoac_gia": "Niên đại xác thực hoặc khoảng giá tham khảo VNĐ, không rõ ghi 'Chưa xác định'",
+  "nien_dai_hoac_gia": "Ghi đúng giá trên tem (nếu có) hoặc khoảng giá bán lẻ thực tế tại Việt Nam bằng VNĐ (VD: 35.000 - 50.000 VNĐ); nếu không thể định giá từ ảnh ghi 'Tùy thương hiệu & nơi bán'.",
   "cau_chuyen_lich_su": "2-3 câu chính xác về bản chất, công dụng hoặc nguồn gốc đã xác thực của đối tượng.",
   "giai_thoai_dac_biet": "2-3 câu mô tả đúng các chi tiết thực tế quan sát được trong ảnh (màu sắc, hình dáng, chất liệu, đặc điểm nổi bật).",
   "thong_tin_san_pham": {
     "hien_thi": true,
-    "calo_uoc_tinh": "Ước tính kcal nếu là món ăn/đồ uống, ngược lại ghi 'Không áp dụng'",
+    "calo_uoc_tinh": "Số kcal chính xác đọc từ bao bì hoặc tính theo định lượng nguyên liệu thực tế (VD: 430 - 480 kcal); nếu là đồ vật không ăn được BẮT BUỘC ghi 'Không áp dụng'",
     "tot_cho_suc_khoe": "1-2 câu thực tế về dinh dưỡng (với món ăn) hoặc lưu ý sử dụng/vệ sinh an toàn (với đồ vật).",
     "chi_tiet_san_pham": "Chất liệu/thành phần thấy rõ hoặc đặc trưng phổ biến nhất.",
     "noi_mua_goi_y": "Loại cửa hàng phổ biến (VD: Siêu thị, cửa hàng thể thao, chợ truyền thống...; chỉ ghi tên quán cụ thể nếu chắc chắn).",
