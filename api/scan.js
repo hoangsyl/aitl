@@ -10,7 +10,14 @@ const DN_HA_BOUNDS = {
 };
 
 const FRIENDLY_ERROR =
-  "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé😍";
+  "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé.";
+
+// Bộ nhớ đệm trên Serverless (giữ lại giữa các lần quét để tăng tốc & tránh gọi lặp)
+let cachedAllModels = null;
+let cachedModelsAt = 0;
+let lastWorkingVisionModel = null;
+const badVisionModels = new Set();
+const MODELS_CACHE_TTL = 10 * 60 * 1000; // 10 phút
 
 function clampToDaNangHoiAn(lat, lng, locationContext = "") {
   const numLat = Number(lat);
@@ -90,20 +97,49 @@ function extractJson(rawText) {
 }
 
 async function fetchWorkingGroqModels(apiKey) {
+  const now = Date.now();
+  if (cachedAllModels && now - cachedModelsAt < MODELS_CACHE_TTL) {
+    return cachedAllModels;
+  }
+
   const res = await fetch("https://api.groq.com/openai/v1/models", {
     headers: { Authorization: `Bearer ${apiKey}` }
   });
   if (!res.ok) throw new Error(`Groq models HTTP ${res.status}`);
+
   const data = await res.json();
   const allIds = (data.data || []).map((m) => m.id).filter(Boolean);
   const activeModels = allIds.filter(
     (id) => !/whisper|tts|guard|safeguard|embed|prompt-guard|playai|orpheus|compound/i.test(id)
   );
   if (!activeModels.length) throw new Error("Không tìm thấy model khả dụng trên Groq");
+
+  cachedAllModels = activeModels;
+  cachedModelsAt = now;
   return activeModels;
 }
 
-async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 7000 }) {
+function getOrderedVisionModels(liveModels) {
+  // Loại bỏ các model chắc chắn chỉ đọc chữ để tránh lỗi HTTP 400
+  const textOnlyPattern = /gpt-oss|deepseek|mixtral|llama-3\.1|llama-3\.3|llama3-|allam|gemma2/i;
+  const visionPattern = /vision|vl|scout|maverick|llama-4|llama-5|omni|multimodal|pixtral|kimi|qwen/i;
+
+  const filtered = liveModels.filter(
+    (m) => !textOnlyPattern.test(m) && !badVisionModels.has(m)
+  );
+
+  const primary = filtered.filter((m) => visionPattern.test(m));
+  const secondary = filtered.filter((m) => !visionPattern.test(m));
+  const list = [...primary, ...secondary];
+
+  // Đưa model chạy ngon nhất gần đây lên đầu tiên để quét trong 1 lần gọi
+  if (lastWorkingVisionModel && list.includes(lastWorkingVisionModel)) {
+    return [lastWorkingVisionModel, ...list.filter((m) => m !== lastWorkingVisionModel)];
+  }
+  return list;
+}
+
+async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 6500 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -120,8 +156,8 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       },
       body: JSON.stringify({
         model,
-        temperature: 0.25,
-        max_tokens: 900,
+        temperature: 0.15,
+        max_tokens: 750,
         messages: [
           {
             role: "user",
@@ -137,7 +173,9 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
 
     const rawText = await res.text();
     if (!res.ok) {
-      throw new Error(`${model}: HTTP ${res.status}`);
+      const err = new Error(`${model}: HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
     }
 
     const parsed = JSON.parse(rawText.trim());
@@ -149,31 +187,32 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
   }
 }
 
-// Tự động lấy danh sách model đang sống từ Groq, ưu tiên model Vision và chạy song song lấy kết quả nhanh nhất
-async function runVisionDynamic({ apiKey, prompt, imageBase64 }) {
+// Gọi tuần tự thông minh: không spam nhiều model cùng lúc gây 429, nhớ model chạy tốt để tăng tốc
+async function runVisionSmart({ apiKey, prompt, imageBase64 }) {
   const liveModels = await fetchWorkingGroqModels(apiKey);
-
-  const visionPriority = liveModels.filter((m) =>
-    /vision|vl|scout|maverick|llama-4|llama-5|omni|multimodal|pixtral|kimi|gemma/i.test(m)
-  );
-  const others = liveModels.filter((m) => !visionPriority.includes(m));
-  const ordered = [...visionPriority, ...others];
-
-  const batchSize = 5;
+  const candidates = getOrderedVisionModels(liveModels);
   const errors = [];
 
-  for (let i = 0; i < ordered.length; i += batchSize) {
-    const batch = ordered.slice(i, i + batchSize);
+  for (const model of candidates.slice(0, 5)) {
     try {
-      const winner = await Promise.any(
-        batch.map((model) =>
-          callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 7000 })
-        )
-      );
-      if (winner && typeof winner === "object") return winner;
-    } catch (aggErr) {
-      const reasons = (aggErr?.errors || []).map((e) => e?.message).filter(Boolean);
-      errors.push(...reasons);
+      const result = await callGroqVision({
+        apiKey,
+        model,
+        prompt,
+        imageBase64,
+        timeoutMs: 6500
+      });
+      if (result && typeof result === "object") {
+        lastWorkingVisionModel = model;
+        return result;
+      }
+    } catch (err) {
+      errors.push(err.message || `${model}: Failed`);
+      // Nếu model báo 400 (không hỗ trợ ảnh) hoặc 404 (đã gỡ), loại khỏi danh sách các lần sau
+      if (err.status === 400 || err.status === 404) {
+        badVisionModels.add(model);
+        if (lastWorkingVisionModel === model) lastWorkingVisionModel = null;
+      }
     }
   }
 
@@ -189,14 +228,14 @@ async function handleChatMode({ apiKey, messages, locationContext }) {
 
   const systemPrompt = `Bạn là trợ lý AIvolution thông minh, thân thiện và am hiểu sâu sắc khu vực Đà Nẵng – Hội An.
 Vị trí hiện tại của người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
-Hãy trả lời ngắn gọn, rõ ràng, thực tế bằng tiếng Việt.`;
+Hãy trả lời ngắn gọn, chính xác, thực tế bằng tiếng Việt.`;
 
   const chatMessages = [
     { role: "system", content: systemPrompt },
     ...(Array.isArray(messages) ? messages.slice(-10) : [])
   ];
 
-  for (const model of sortedModels.slice(0, 5)) {
+  for (const model of sortedModels.slice(0, 4)) {
     try {
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
@@ -206,8 +245,8 @@ Hãy trả lời ngắn gọn, rõ ràng, thực tế bằng tiếng Việt.`;
         },
         body: JSON.stringify({
           model,
-          temperature: 0.5,
-          max_tokens: 550,
+          temperature: 0.4,
+          max_tokens: 500,
           messages: chatMessages
         })
       });
@@ -553,36 +592,25 @@ module.exports = async (req, res) => {
 
     const areaPoint = clampToDaNangHoiAn(lat, lng, locationContext);
 
-    const prompt = `Bạn là chuyên gia văn hóa Đà Nẵng – Hội An, đồng thời là chuyên gia dinh dưỡng & phân tích sản phẩm.
-Ngữ cảnh vị trí (chỉ trong Đà Nẵng – Hội An): ${locationContext || "Đà Nẵng – Hội An"}.
+    const prompt = `Bạn là chuyên gia nhận diện hình ảnh, văn hóa Đà Nẵng – Hội An và phân tích sản phẩm.
+Ngữ cảnh vị trí: ${locationContext || "Đà Nẵng – Hội An"}.
 
-Nhiệm vụ: Nhận diện chính xác đối tượng chính trong ảnh và phân loại đúng 1 trong 2 nhóm:
-- NHÓM ĐỊA ĐIỂM: "Di tích" | "Nhà hàng & Quán ăn" | "Shop & Workshop" | "Hán Nôm"
-- NHÓM VẬT PHẨM / THỨC ĂN: "Thức ăn & Đồ uống" | "Sản phẩm" | "Vật thể"
+QUY TẮC CHÍNH XÁC:
+- Đọc kỹ mọi chữ trên bảng hiệu, logo, nhãn mác trong ảnh để xác định ĐÚNG tên cửa hàng, di tích, món ăn hoặc sản phẩm.
+- Không bịa đặt địa chỉ cụ thể nếu ảnh không thể hiện rõ; chỉ ghi khu vực thực tế (ví dụ: "Phố cổ Hội An" hoặc "Đà Nẵng – Hội An").
+- Phân loại đúng 1 trong 2 nhóm:
+  + NHÓM ĐỊA ĐIỂM: "Di tích" | "Nhà hàng & Quán ăn" | "Shop & Workshop" | "Hán Nôm"
+  + NHÓM VẬT PHẨM / THỨC ĂN: "Thức ăn & Đồ uống" | "Sản phẩm" | "Vật thể"
 
-Yêu cầu nội dung (viết văn phong hướng dẫn viên du lịch truyền cảm, chấm phẩy rõ ràng để đọc thuyết minh thật hay):
-1. "cau_chuyen_lich_su": 2–3 câu giới thiệu rõ nguồn gốc, bối cảnh hoặc công dụng.
-2. "giai_thoai_dac_biet" (Điểm độc đáo): Viết thật hay, cuốn hút, giàu cảm xúc (4–5 câu, khoảng 80–110 từ), chấm phẩy đầy đủ, phân tích kỹ chi tiết nhìn thấy trên ảnh và giá trị đặc trưng.
-3. "thong_tin_san_pham":
-   - Nếu là NHÓM VẬT PHẨM / THỨC ĂN: đặt "hien_thi": true.
-     + "calo_uoc_tinh": Ước tính cụ thể lượng calo (hoặc ghi "Không áp dụng (vật dụng không ăn được)").
-     + "tot_cho_suc_khoe": Đánh giá rõ có tốt cho sức khỏe không (hoặc độ an toàn khi dùng).
-     + "chi_tiet_san_pham": Mô tả chi tiết thành phần, thương hiệu/xuất xứ, công dụng.
-     + "noi_mua_goi_y": Gợi ý cụ thể địa chỉ hoặc hệ thống cửa hàng uy tín tại Đà Nẵng – Hội An bán đúng vật phẩm này.
-     + "tu_khoa_mua_hang": Từ khóa ngắn gọn để tìm đúng nơi bán vật phẩm này trên Google Maps tại Đà Nẵng – Hội An.
-   - Nếu là NHÓM ĐỊA ĐIỂM: đặt "hien_thi": false và để trống các chuỗi bên trong.
-4. "danh_gia_ban_dia": Tổng hợp nhận xét chân thực theo phong cách Local Guide Đà Nẵng – Hội An.
-5. "han_viet": CHỈ đặt "co_han_viet": true nếu ảnh THẬT SỰ CÓ CHỮ HÁN/NÔM.
-
-CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không viết thêm chữ nào bên ngoài ngoặc nhọn) theo mẫu:
+CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không kèm chữ bên ngoài):
 {
   "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": true,
-  "ten_dia_diem": "Tên chính xác đối tượng",
-  "dia_chi": "Địa chỉ tại Đà Nẵng / Hội An (hoặc thương hiệu/xuất xứ nếu là sản phẩm)",
-  "nien_dai_hoac_gia": "Niên đại hoặc mức giá tham khảo",
-  "cau_chuyen_lich_su": "2–3 câu giới thiệu.",
-  "giai_thoai_dac_biet": "4–5 câu miêu tả thật hay và chi tiết về điểm độc đáo.",
+  "ten_dia_diem": "Tên chính xác đọc được từ ảnh",
+  "dia_chi": "Địa chỉ tại Đà Nẵng / Hội An hoặc thương hiệu/xuất xứ",
+  "nien_dai_hoac_gia": "Chỉ ghi gọn niên đại hoặc khoảng giá VNĐ (ví dụ: 250.000 - 450.000đ)",
+  "cau_chuyen_lich_su": "2-3 câu ngắn gọn, chuẩn xác về đối tượng trong ảnh.",
+  "giai_thoai_dac_biet": "3-4 câu miêu tả chi tiết điểm nổi bật nhìn thấy trực tiếp trong ảnh, chấm phẩy rõ ràng để đọc thuyết minh.",
   "thong_tin_san_pham": {
     "hien_thi": false,
     "calo_uoc_tinh": "",
@@ -599,12 +627,13 @@ CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không viết thêm chữ nào bên ng
     "y_nghia_tong_the": ""
   },
   "danh_gia_ban_dia": {
-    "tom_tat": "Tóm tắt góc nhìn của người địa phương (2 câu).",
+    "tom_tat": "Tóm tắt thực tế theo góc nhìn người địa phương (1-2 câu).",
     "review_mau": ["Nhận xét thực tế 1", "Nhận xét thực tế 2"]
   }
-}`;
+}
+Lưu ý: Nếu là NHÓM VẬT PHẨM / THỨC ĂN thì đặt "la_dia_diem": false và "thong_tin_san_pham.hien_thi": true rồi điền đầy đủ các mục bên trong.`;
 
-    const result = await runVisionDynamic({
+    const result = await runVisionSmart({
       apiKey: groqKey,
       prompt,
       imageBase64
