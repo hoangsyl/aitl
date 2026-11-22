@@ -432,7 +432,6 @@ function stopCamera() {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    // Ngắt và đánh dấu làm mới AudioContext để tránh bị iOS/Android treo giọng khi quay lại tab
     stopSpeaking();
     resetAudioContext();
   } else {
@@ -653,7 +652,6 @@ function unlockAudioContext() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
 
-  // Nếu vừa thoát tab quay lại hoặc bị iOS đẩy vào trạng thái interrupted/closed -> tạo mới hoàn toàn
   if (
     !audioCtx ||
     audioNeedsReset ||
@@ -792,7 +790,6 @@ async function speakText(text) {
       }
     }
 
-    // Dự phòng bằng HTML Audio nếu AudioContext không chạy được sau khi quay lại tab
     await playViaHtmlAudio(buffer, session);
   } catch (_) {
     if (session === speechSessionId) {
@@ -1034,7 +1031,6 @@ document.getElementById("btnRefreshWeather").addEventListener("click", () => ren
 document.getElementById("detailBackBtn").addEventListener("click", () => navigateTo(previousView || "home"));
 document.getElementById("detailCloseBtn").addEventListener("click", () => navigateTo("home"));
 
-// Xóa lịch sử bằng AlertDialog chuẩn
 document.getElementById("btnClearHistory").addEventListener("click", () => {
   if (typeof confirmDialog.showModal === "function") {
     confirmDialog.showModal();
@@ -1053,7 +1049,6 @@ document.getElementById("dialogConfirmBtn").addEventListener("click", () => {
   renderHomeDashboard();
 });
 
-// Chọn chế độ trên Scanner
 document.querySelectorAll(".mode-pill[data-mode]").forEach((btn) => {
   btn.addEventListener("click", () => {
     scanMode = btn.dataset.mode;
@@ -1081,15 +1076,26 @@ document.getElementById("switchBtn").addEventListener("click", () => {
   startCamera();
 });
 
+function prepareScanImage(source, srcW, srcH) {
+  const maxSide = 1024;
+  const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
+  canvas.width = Math.round(srcW * scale);
+  canvas.height = Math.round(srcH * scale);
+
+  const ctx2d = canvas.getContext("2d");
+  ctx2d.imageSmoothingEnabled = true;
+  ctx2d.imageSmoothingQuality = "high";
+  ctx2d.drawImage(source, 0, 0, canvas.width, canvas.height);
+
+  return {
+    base64: canvas.toDataURL("image/jpeg", 0.82).split(",")[1],
+    thumb: makeThumbnail(canvas)
+  };
+}
+
 document.getElementById("captureBtn").addEventListener("click", () => {
   if (!video || !video.videoWidth) return;
-  const maxW = 800;
-  const scale = Math.min(1, maxW / video.videoWidth);
-  canvas.width = video.videoWidth * scale;
-  canvas.height = video.videoHeight * scale;
-  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-  const base64 = canvas.toDataURL("image/jpeg", 0.72).split(",")[1];
-  const thumb = makeThumbnail(canvas);
+  const { base64, thumb } = prepareScanImage(video, video.videoWidth, video.videoHeight);
   scanBase64(base64, thumb);
 });
 
@@ -1100,13 +1106,7 @@ fileInput.addEventListener("change", (e) => {
   reader.onload = () => {
     const img = new Image();
     img.onload = () => {
-      const maxW = 800;
-      const scale = Math.min(1, maxW / img.width);
-      canvas.width = img.width * scale;
-      canvas.height = img.height * scale;
-      canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      const base64 = canvas.toDataURL("image/jpeg", 0.75).split(",")[1];
-      const thumb = makeThumbnail(canvas);
+      const { base64, thumb } = prepareScanImage(img, img.width, img.height);
       scanBase64(base64, thumb);
     };
     img.src = reader.result;
