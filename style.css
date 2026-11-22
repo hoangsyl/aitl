@@ -1910,3 +1910,151 @@ input:focus-visible {
     animation: none;
   }
 }
+/* ==========================================
+   WEATHER ICONS ANIMATION (NẮNG / MÂY / MƯA / BÃO)
+   ========================================== */
+.wx-anim-icon {
+  overflow: visible;
+}
+
+.wx-anim-icon .wx-sun-spin,
+.wx-anim-icon .wx-sun-orb,
+.wx-anim-icon .wx-moon-orb,
+.wx-anim-icon .wx-cloud,
+.wx-anim-icon .wx-drop,
+.wx-anim-icon .wx-bolt {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform, opacity;
+}
+
+/* 1. Nắng: Mặt trời xoay chậm + nhịp sáng */
+.wx-anim-icon .wx-sun-spin {
+  animation: wxSunRotate 14s linear infinite;
+}
+
+.wx-anim-icon .wx-sun-orb {
+  animation: wxSunPulse 3.2s ease-in-out infinite;
+}
+
+.wx-anim-icon .wx-moon-orb {
+  animation: wxMoonSway 4s ease-in-out infinite;
+}
+
+/* 2. Mây: Trôi bồng bềnh nhẹ nhàng */
+.wx-is-cloudy .wx-cloud,
+.wx-is-partly .wx-cloud {
+  animation: wxCloudFloat 3.6s ease-in-out infinite;
+}
+
+.wx-is-rain .wx-cloud {
+  animation: wxCloudBob 2.6s ease-in-out infinite;
+}
+
+/* 3. Mưa: Hạt mưa rơi chéo liên tục theo nhịp */
+.wx-anim-icon .wx-drop {
+  animation: wxRainFall 1.05s linear infinite;
+}
+.wx-anim-icon .wx-drop-2 {
+  animation-delay: 0.35s;
+}
+.wx-anim-icon .wx-drop-3 {
+  animation-delay: 0.7s;
+}
+
+/* 4. Bão & Sấm sét: Mây rung nhẹ + tia chớp lóe sáng */
+.wx-is-storm .wx-cloud {
+  animation: wxStormCloud 2.8s ease-in-out infinite;
+}
+
+.wx-anim-icon .wx-bolt {
+  animation: wxLightningFlash 2.8s ease-in-out infinite;
+}
+
+/* 5. Animation cho nút icon Thời tiết trên Header & Thanh điều hướng */
+#btnQuickWeather svg,
+.nav-btn[data-nav="weather"] svg {
+  overflow: visible;
+}
+#btnQuickWeather svg path:last-child,
+.nav-btn[data-nav="weather"] svg path:last-child {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: wxCloudFloat 3.5s ease-in-out infinite;
+}
+
+@keyframes wxSunRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes wxSunPulse {
+  0%, 100% { transform: scale(0.95); opacity: 0.9; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@keyframes wxMoonSway {
+  0%, 100% { transform: rotate(-6deg); }
+  50% { transform: rotate(6deg); }
+}
+
+@keyframes wxCloudFloat {
+  0%, 100% { transform: translateX(-1.6px); }
+  50% { transform: translateX(1.6px); }
+}
+
+@keyframes wxCloudBob {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-1.5px); }
+}
+
+@keyframes wxRainFall {
+  0% {
+    transform: translate(1px, -2px);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translate(-1.8px, 4.5px);
+    opacity: 0;
+  }
+}
+
+@keyframes wxLightningFlash {
+  0%, 58%, 68%, 100% {
+    opacity: 0.25;
+    transform: scale(0.94);
+  }
+  61% {
+    opacity: 1;
+    transform: scale(1.14);
+  }
+  64% {
+    opacity: 0.45;
+    transform: scale(0.98);
+  }
+  66% {
+    opacity: 1;
+    transform: scale(1.12);
+  }
+}
+
+@keyframes wxStormCloud {
+  0%, 58%, 70%, 100% { transform: translateX(0); }
+  61% { transform: translateX(-1.5px); }
+  64% { transform: translateX(1.5px); }
+  67% { transform: translateX(-1px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wx-anim-icon *,
+  #btnQuickWeather svg path:last-child,
+  .nav-btn[data-nav="weather"] svg path:last-child {
+    animation: none !important;
+  }
+}
