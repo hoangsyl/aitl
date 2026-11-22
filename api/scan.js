@@ -1,22 +1,22 @@
 /**
- * Bản quyền thuộc về AIvolution Team
- * Bản quyền thuộc về AIvolution Team
- * Bản quyền thuộc về AIvolution Team
- * Bản quyền thuộc về AIvolution Team
- * Bản quyền thuộc về AIvolution Team
+ * Bản quyền thuộc về AIvolution Team 
+ * 
+ *  Bản quyền thuộc về AIvolution Team 
+ *  
+ *  Bản quyền thuộc về AIvolution Team 
  */
 
 const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG & HẰNG SỐ
+// 1. CẤU HÌNH HỆ THỐNG & HẰNG SỐ (TỐI ƯU TỐC ĐỘ)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GEMINI_MODELS: ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
-  GEMINI_TIMEOUT_MS: 16000,
-  GROQ_TIMEOUT_MS: 7500,
+  GEMINI_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+  GEMINI_TIMEOUT_MS: 8500,
+  GROQ_TIMEOUT_MS: 6500,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 10 * 60 * 1000,
   KEY_COOLDOWN_MS: 60 * 1000,
@@ -242,44 +242,36 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 }
 
 // ==========================================
-// 4. PROMPT CHUẨN CHUYÊN GIA VĂN HÓA & ẨM THỰC
+// 4. PROMPT GỌN SÚC TÍCH (XUẤT JSON NHANH)
 // ==========================================
 function buildVisionPrompt(locationContext) {
-  return `Bạn là chuyên gia văn hóa, lịch sử, ẩm thực và du lịch bản địa tại Đà Nẵng – Hội An (Việt Nam).
-Ngữ cảnh vị trí & chế độ quét: ${locationContext || "Đà Nẵng – Hội An"}.
+  return `Chuyên gia văn hóa, ẩm thực & du lịch Đà Nẵng – Hội An.
+Ngữ cảnh: ${locationContext || "Đà Nẵng – Hội An"}.
 
-I. QUY TẮC QUAN SÁT & PHÂN BIỆT CHÍNH XÁC (BẮT BUỘC KIỂM TRA CHI TIẾT THỰC TẾ TRONG ẢNH):
-1. Cao lầu (Hội An) vs Mì Quảng:
-   - Cao lầu: Sợi mì dày, tiết diện hơi vuông, màu vàng sậm hoặc nâu nhạt; ăn kèm thịt xá xíu thái lát mỏng viền đỏ/nâu, ram/da heo vuông chiên giòn, giá trụng và rất ít nước xốt đậm màu dưới đáy tô (KHÔNG rắc đậu phộng rang nguyên hạt).
-   - Mì Quảng: Sợi mì dẹt bản to (trắng hoặc vàng nghệ); đặc trưng gần như luôn có đậu phộng rang nguyên hạt trên mặt, bánh tráng mè nướng bẻ miếng, tôm/thịt gà/thịt heo/trứng cút, rau sống và nước dùng sâm sấp.
-2. Bún bò (Huế / Đà Nẵng) vs Phở:
-   - Bún bò: Sợi bún tròn to; nước dùng màu cam đỏ có váng dầu điều/sả ớt; topping thường có bắp bò, chả cua/chả lụa, giò heo, huyết.
-   - Phở: Sợi bánh phở dẹt trắng mỏng; nước dùng trong thanh; thịt bò tái/nạm thái mỏng, nhiều hành lá.
-3. Đặc sản khác, Địa điểm & Đồ vật thường ngày:
-   - Đọc chính xác chữ trên bảng hiệu, nhãn mác, bao bì, bia đá hoặc hoành phi Hán – Nôm.
-   - Không bịa đặt địa chỉ số nhà cụ thể nếu ảnh không hiển thị; chỉ ghi khu vực chính xác (VD: "Phố cổ Hội An" hoặc "Đà Nẵng – Hội An").
-   - Với mọi vật thể thường ngày (đồ gia dụng, thiết bị, quần áo, đồ uống...), hãy cứ nhận diện chính xác tên vật thể đó thuộc nhóm "Vật thể" hoặc "Sản phẩm". CHỈ trả về {"khong_nhan_dien_duoc": true, "ly_do": "Ảnh quá tối hoặc nhòe hoàn toàn"} khi ảnh đen kịt hoặc mờ không nhìn thấy bất kỳ hình khối nào.
+QUY TẮC NHẬN DIỆN NHANH & CHÍNH XÁC:
+- Cao lầu: sợi mì dày vuông màu vàng/nâu, thịt xá xíu, ram/da heo chiên giòn, ít nước xốt, KHÔNG đậu phộng rang.
+- Mì Quảng: sợi mì dẹt bản to, có đậu phộng rang, bánh tráng mè, tôm/thịt/trứng, nước dùng sâm sấp.
+- Bún bò: sợi bún tròn to, nước cam đỏ có váng dầu điều/sả, bắp bò/chả/giò. Phở: sợi dẹt trắng mỏng, nước trong thanh.
+- Đồ vật thường ngày: nhận diện đúng tên vật thể thuộc "Vật thể" hoặc "Sản phẩm". Chỉ báo lỗi khi ảnh tối đen hoặc nhòe hoàn toàn.
+- Viết tiếng Việt súc tích, rõ ràng, tự nhiên.
 
-II. YÊU CẦU VĂN PHONG THUYẾT MINH:
-- Viết tiếng Việt chuẩn mực, tự nhiên, giàu chiều sâu văn hóa như hướng dẫn viên chuyên nghiệp; ngắt câu bằng dấu chấm, dấu phẩy rõ ràng để đọc thành giọng nói mượt mà.
-
-III. ĐỊNH DẠNG JSON DUY NHẤT (KHÔNG KÈM CHỮ NGOÀI JSON):
+CHỈ TRẢ VỀ JSON HỢP LỆ:
 {
   "khong_nhan_dien_duoc": false,
   "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": true,
-  "ten_dia_diem": "Tên chính xác nhất của món ăn, địa điểm hoặc sản phẩm",
-  "dia_chi": "Địa chỉ thực tế tại Đà Nẵng / Hội An hoặc thương hiệu/xuất xứ",
-  "nien_dai_hoac_gia": "Ghi ngắn gọn niên đại hoặc khoảng giá VNĐ (VD: 35.000 - 50.000đ)",
-  "cau_chuyen_lich_su": "2-3 câu chuẩn xác về nguồn gốc, giá trị văn hóa hoặc bản sắc của đối tượng.",
-  "giai_thoai_dac_biet": "3-4 câu miêu tả chi tiết hương vị, điểm nhấn kiến trúc hoặc trải nghiệm nổi bật nhìn thấy trong ảnh.",
+  "ten_dia_diem": "Tên chính xác",
+  "dia_chi": "Khu vực Đà Nẵng / Hội An hoặc xuất xứ",
+  "nien_dai_hoac_gia": "Niên đại hoặc khoảng giá VNĐ",
+  "cau_chuyen_lich_su": "1-2 câu ngắn gọn về nguồn gốc/bản sắc.",
+  "giai_thoai_dac_biet": "2 câu miêu tả điểm nổi bật trong ảnh.",
   "thong_tin_san_pham": {
     "hien_thi": false,
-    "calo_uoc_tinh": "VD: 450 - 550 kcal (hoặc Không áp dụng)",
-    "tot_cho_suc_khoe": "Nhận xét khách quan về dinh dưỡng, thành phần hoặc lưu ý dị ứng",
-    "chi_tiet_san_pham": "Nguyên liệu chính hoặc chất liệu tạo nên sản phẩm",
-    "noi_mua_goi_y": "Gợi ý 2-3 địa điểm uy tín tại Đà Nẵng hoặc Hội An",
-    "tu_khoa_mua_hang": "Từ khóa tìm kiếm trên Google Maps"
+    "calo_uoc_tinh": "VD: 450 - 550 kcal hoặc Không áp dụng",
+    "tot_cho_suc_khoe": "Nhận xét ngắn gọn dinh dưỡng/lưu ý",
+    "chi_tiet_san_pham": "Nguyên liệu hoặc chất liệu chính",
+    "noi_mua_goi_y": "Gợi ý tại Đà Nẵng hoặc Hội An",
+    "tu_khoa_mua_hang": "Từ khóa Google Maps"
   },
   "han_viet": {
     "co_han_viet": false,
@@ -289,11 +281,11 @@ III. ĐỊNH DẠNG JSON DUY NHẤT (KHÔNG KÈM CHỮ NGOÀI JSON):
     "y_nghia_tong_the": ""
   },
   "danh_gia_ban_dia": {
-    "tom_tat": "Tóm tắt góc nhìn thực tế của người bản địa và du khách (1-2 câu).",
-    "review_mau": ["Nhận xét ngắn gọn thực tế 1", "Nhận xét ngắn gọn thực tế 2"]
+    "tom_tat": "1 câu nhận xét thực tế.",
+    "review_mau": ["Nhận xét ngắn 1", "Nhận xét ngắn 2"]
   }
 }
-Lưu ý: Với món ăn, đồ uống hoặc sản phẩm, đặt "la_dia_diem": false và "thong_tin_san_pham.hien_thi": true rồi điền đầy đủ thông tin dinh dưỡng & nơi mua.`;
+Với món ăn, đồ uống hoặc sản phẩm: đặt "la_dia_diem": false và "thong_tin_san_pham.hien_thi": true.`;
 }
 
 // ==========================================
@@ -309,10 +301,10 @@ async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
 
     const generationConfig = {
       temperature: 0.15,
-      maxOutputTokens: 2048,
+      maxOutputTokens: 1200,
       responseMimeType: "application/json"
     };
-    if (model.includes("flash")) {
+    if (model.includes("3.8-flash")) {
       generationConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 
@@ -380,7 +372,7 @@ async function runGeminiVision({ apiKeys, prompt, imageBase64 }) {
 async function handleGeminiChat({ apiKeys, messages, locationContext }) {
   const systemPrompt = `Bạn là trợ lý du lịch, ẩm thực và dinh dưỡng AIvolution am hiểu sâu sắc Đà Nẵng – Hội An.
 Vị trí hiện tại của người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
-Trả lời bằng tiếng Việt tự nhiên, chuyên nghiệp, chính xác, súc tích và dễ đọc trên điện thoại.`;
+Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác và dễ đọc trên điện thoại.`;
 
   const contents = (Array.isArray(messages) ? messages.slice(-10) : []).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -391,8 +383,8 @@ Trả lời bằng tiếng Việt tự nhiên, chuyên nghiệp, chính xác, s�
     for (const apiKey of apiKeys) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = { temperature: 0.4, maxOutputTokens: 800 };
-        if (model.includes("flash")) {
+        const generationConfig = { temperature: 0.4, maxOutputTokens: 650 };
+        if (model.includes("3.8-flash")) {
           generationConfig.thinkingConfig = { thinkingBudget: 0 };
         }
 
@@ -490,7 +482,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64 }) {
       body: JSON.stringify({
         model,
         temperature: 0.15,
-        max_tokens: 900,
+        max_tokens: 800,
         messages: [
           {
             role: "user",
