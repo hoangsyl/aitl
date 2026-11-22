@@ -1,17 +1,33 @@
+const HISTORY_KEY = "aivolution_scan_history_v1";
+const MAX_HISTORY = 30;
+const DAILY_CALORIE_GOAL = 2000;
+const FRIENDLY_ERROR_MSG =
+  "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé.";
+
+// Views & Elements
+const views = {
+  home: document.getElementById("viewHome"),
+  weather: document.getElementById("viewWeather"),
+  chat: document.getElementById("viewChat"),
+  scanner: document.getElementById("viewScanner"),
+  detail: document.getElementById("viewDetail")
+};
+
+const bottomNav = document.getElementById("bottomNav");
 const video = document.getElementById("camera");
 const canvas = document.getElementById("canvas");
+const fileInput = document.getElementById("fileInput");
 const statusPill = document.getElementById("statusPill");
-const sheet = document.getElementById("sheet");
-const sheetContent = document.getElementById("sheetContent");
+const cameraErrorBanner = document.getElementById("cameraErrorBanner");
 const gpsDot = document.getElementById("gpsDot");
 const gpsText = document.getElementById("gpsText");
 const historyBadge = document.getElementById("historyBadge");
+const confirmDialog = document.getElementById("confirmDialog");
 
-const HISTORY_KEY = "aivolution_scan_history_v1";
-const MAX_HISTORY = 30;
-const FRIENDLY_ERROR_MSG =
-  "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé😍";
-
+// State
+let activeView = "home";
+let previousView = "home";
+let scanMode = "auto";
 let facingMode = "environment";
 let currentStream = null;
 let currentCoords = { lat: null, lng: null };
@@ -19,11 +35,7 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
 
-// Xác nhận xóa lịch sử 2 chạm (không dùng confirm() gây đơ camera iPhone)
-let confirmClearArmed = false;
-let confirmClearTimer = null;
-
-// Web Audio API + Bộ nhớ đệm tải trước giọng đọc
+// Web Audio API + Bộ đệm tải sẵn giọng Hoài My
 let audioCtx = null;
 let activeSource = null;
 const ttsBufferCache = new Map();
@@ -32,7 +44,7 @@ let chatHistory = [
   {
     role: "assistant",
     content:
-      "Chào bạn! Mình là trợ lý AIvolution. Bạn cần hỏi đường, quán ngon Đà Nẵng – Hội An, hay thắc mắc về sản phẩm vừa quét cứ nhắn mình nhé!"
+      "Chào bạn! Mình là trợ lý AIvolution. Bạn cần hỏi đường, quán ngon Đà Nẵng – Hội An hay thông tin dinh dưỡng món vừa quét cứ nhắn mình nhé!"
   }
 ];
 
@@ -40,11 +52,68 @@ function escapeHtml(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;");
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 // ==========================================
-// 1. QUẢN LÝ LỊCH SỬ (localStorage)
+// 1. ĐIỀU HƯỚNG GIỮA CÁC MÀN HÌNH
+// ==========================================
+function navigateTo(viewName) {
+  if (!views[viewName]) return;
+
+  if (activeView === "detail" && viewName !== "detail") {
+    stopSpeaking();
+  }
+  if (viewName !== activeView && activeView !== "detail") {
+    previousView = activeView;
+  }
+
+  activeView = viewName;
+
+  Object.entries(views).forEach(([key, el]) => {
+    el.hidden = key !== viewName;
+  });
+
+  // Ẩn bottom nav khi đang ở Scanner hoặc Detail
+  bottomNav.hidden = viewName === "scanner" || viewName === "detail";
+
+  document.querySelectorAll(".bottom-nav .nav-btn").forEach((btn) => {
+    const isMatch = btn.dataset.nav === viewName && btn.id !== "navHistoryBtn";
+    btn.classList.toggle("active", isMatch);
+    if (isMatch) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+
+  if (viewName === "home") {
+    stopCamera();
+    renderHomeDashboard();
+  } else if (viewName === "scanner") {
+    startCamera();
+    updateLastThumbPreview();
+  } else if (viewName === "weather") {
+    stopCamera();
+    renderWeatherView();
+  } else if (viewName === "chat") {
+    stopCamera();
+    renderChatView();
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (confirmDialog.open) {
+      confirmDialog.close();
+    } else if (activeView === "detail") {
+      navigateTo(previousView || "home");
+    } else if (activeView === "scanner") {
+      navigateTo("home");
+    }
+  }
+});
+
+// ==========================================
+// 2. LỊCH SỬ & THỐNG KÊ DASHBOARD
 // ==========================================
 function loadHistory() {
   try {
@@ -87,301 +156,149 @@ function addToHistory(data, thumbDataUrl) {
 function updateHistoryBadge() {
   const count = loadHistory().length;
   if (count > 0) {
-    historyBadge.textContent = count > 99 ? "99+" : count;
-    historyBadge.style.display = "flex";
+    historyBadge.textContent = count > 99 ? "99+" : String(count);
+    historyBadge.hidden = false;
   } else {
-    historyBadge.style.display = "none";
+    historyBadge.hidden = true;
   }
 }
 
-function makeThumbnail(sourceCanvas) {
-  try {
-    const thumbCanvas = document.createElement("canvas");
-    const maxW = 140;
-    const scale = Math.min(1, maxW / sourceCanvas.width);
-    thumbCanvas.width = Math.round(sourceCanvas.width * scale);
-    thumbCanvas.height = Math.round(sourceCanvas.height * scale);
-    thumbCanvas.getContext("2d").drawImage(sourceCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
-    return thumbCanvas.toDataURL("image/jpeg", 0.55);
-  } catch (_) {
-    return "";
+function parseCalories(str) {
+  if (!str) return 0;
+  const text = String(str).toLowerCase();
+  if (text.includes("không áp dụng")) return 0;
+  const nums = text.match(/\d+/g);
+  if (!nums) return 0;
+  if (nums.length >= 2) {
+    return Math.round((Number(nums[0]) + Number(nums[1])) / 2);
   }
+  return Number(nums[0]) || 0;
 }
 
-function resetClearConfirm() {
-  confirmClearArmed = false;
-  clearTimeout(confirmClearTimer);
-}
-
-// ==========================================
-// 2. MENU CHÍNH (LỊCH SỬ | THỜI TIẾT | CHATBOT)
-// ==========================================
-function openMenuSheet(activeTab = "history") {
-  stopSpeaking();
-  resetClearConfirm();
-
-  sheetContent.innerHTML = `
-    <div class="sheet-header">
-      <h2 class="title" style="font-size:20px;">☰ Menu AIvolution</h2>
-      <button class="btn-close" onclick="closeSheet()">✕</button>
-    </div>
-
-    <div class="menu-tabs">
-      <button class="menu-tab ${activeTab === "history" ? "active" : ""}" onclick="openMenuSheet('history')">🕒 Lịch sử</button>
-      <button class="menu-tab ${activeTab === "weather" ? "active" : ""}" onclick="openMenuSheet('weather')">🌦️ Thời tiết</button>
-      <button class="menu-tab ${activeTab === "chat" ? "active" : ""}" onclick="openMenuSheet('chat')">💬 Chatbot</button>
-    </div>
-
-    <div id="menuBody"></div>
-  `;
-
-  sheet.classList.add("open");
-
-  if (activeTab === "history") renderHistoryTab();
-  else if (activeTab === "weather") renderWeatherTab();
-  else if (activeTab === "chat") renderChatTab();
-}
-
-function renderHistoryTab() {
-  const body = document.getElementById("menuBody");
+function renderHomeDashboard() {
   const list = loadHistory();
+  let totalCalories = 0;
+  let placesCount = 0;
+  let foodCount = 0;
+  let productCount = 0;
 
+  list.forEach((item) => {
+    const d = item.data || {};
+    const type = String(d.loai_doi_tuong || "").toLowerCase();
+    const kcal = parseCalories(d.thong_tin_san_pham?.calo_uoc_tinh);
+    totalCalories += kcal;
+
+    if (d.la_dia_diem || /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm/.test(type)) {
+      placesCount++;
+    } else if (/thức ăn|đồ uống/.test(type) || kcal > 0) {
+      foodCount++;
+    } else {
+      productCount++;
+    }
+  });
+
+  document.getElementById("totalCaloriesVal").textContent = totalCalories.toLocaleString("vi-VN");
+  document.getElementById("totalScansSub").textContent = `${list.length} mục đã nhận diện`;
+
+  const circumference = 226.2;
+  const ratio = Math.min(1, totalCalories > 0 ? totalCalories / DAILY_CALORIE_GOAL : list.length / 10);
+  const offset = circumference * (1 - Math.max(0.08, ratio));
+  document.getElementById("heroRingProgress").setAttribute("stroke-dashoffset", offset.toFixed(1));
+
+  const maxCat = Math.max(1, placesCount, foodCount, productCount);
+  document.getElementById("statPlaces").textContent = `${placesCount} mục`;
+  document.getElementById("statFood").textContent = `${foodCount} mục`;
+  document.getElementById("statProducts").textContent = `${productCount} mục`;
+
+  document.getElementById("barPlaces").style.transform = `scaleX(${Math.max(0.12, placesCount / maxCat)})`;
+  document.getElementById("barFood").style.transform = `scaleX(${Math.max(0.12, foodCount / maxCat)})`;
+  document.getElementById("barProducts").style.transform = `scaleX(${Math.max(0.12, productCount / maxCat)})`;
+
+  const clearBtn = document.getElementById("btnClearHistory");
+  clearBtn.hidden = list.length === 0;
+
+  const container = document.getElementById("homeHistoryContainer");
   if (!list.length) {
-    body.innerHTML = `<div class="history-empty">Chưa có lịch sử quét nào.<br/>Hãy chụp hoặc chọn ảnh để bắt đầu khám phá!</div>`;
+    container.innerHTML = `
+      <div class="empty-card">
+        <p>Chưa có mục nào được quét. Hãy mở máy quét để nhận diện món ăn, địa điểm hoặc sản phẩm quanh bạn.</p>
+        <button type="button" class="btn-pill btn-primary" id="emptyScanBtn">Mở AI Scanner</button>
+      </div>
+    `;
+    document.getElementById("emptyScanBtn").addEventListener("click", () => navigateTo("scanner"));
     return;
   }
 
-  body.innerHTML = `
-    <div class="history-top">
-      <span style="font-size:12px;color:#6b5b52;">Đã lưu ${list.length} mục • Bấm để xem lại</span>
-      <button class="btn-clear-all" onclick="clearAllHistory()">Xóa tất cả</button>
-    </div>
-    <div class="history-list">
+  container.innerHTML = `
+    <ul class="history-list">
       ${list
-        .map(
-          (item) => `
-        <div class="history-item" onclick="openHistoryItem(${item.id})">
-          ${
-            item.thumb
-              ? `<img class="history-thumb" src="${item.thumb}" alt="thumb" />`
-              : `<div class="history-thumb" style="display:flex;align-items:center;justify-content:center;font-size:22px;">📷</div>`
-          }
-          <div class="history-info">
-            <div class="history-name">${escapeHtml(item.data.ten_dia_diem || "Kết quả nhận diện")}</div>
-            <div class="history-sub">${escapeHtml(item.data.loai_doi_tuong || "")} • ${item.time}</div>
-          </div>
-          <button class="btn-del-item" title="Xóa" onclick="deleteHistoryItem(event, ${item.id})">🗑️</button>
-        </div>
-      `
-        )
-        .join("")}
-    </div>
-  `;
-}
+        .map((item) => {
+          const kcal = parseCalories(item.data?.thong_tin_san_pham?.calo_uoc_tinh);
+          const subText = kcal > 0
+            ? `${kcal} kcal • ${item.time}`
+            : `${escapeHtml(item.data?.loai_doi_tuong || "Nhận diện")} • ${item.time}`;
 
-// ==========================================
-// 3. THỜI TIẾT THEO GPS + TỶ LỆ MƯA + GỢI Ý ĐI CHƠI
-// ==========================================
-function interpretWeatherCode(code) {
-  if (code === 0) return { text: "Trời quang đãng", icon: "☀️" };
-  if ([1, 2, 3].includes(code)) return { text: "Có mây nhẹ", icon: "⛅" };
-  if ([45, 48].includes(code)) return { text: "Có sương mù", icon: "🌫️" };
-  if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return { text: "Có mưa", icon: "🌧️" };
-  if ([95, 96, 99].includes(code)) return { text: "Có dông bão", icon: "⛈️" };
-  return { text: "Thời tiết ổn định", icon: "🌤️" };
-}
-
-async function renderWeatherTab() {
-  const body = document.getElementById("menuBody");
-  const lat = currentCoords.lat || 15.98;
-  const lng = currentCoords.lng || 108.25;
-  const locLabel = currentCoords.lat
-    ? `GPS hiện tại (${lat.toFixed(4)}, ${lng.toFixed(4)})`
-    : "Khu vực Đà Nẵng – Hội An (Mặc định)";
-
-  body.innerHTML = `<div class="history-empty">⏳ Đang tải dự báo thời tiết tại vị trí của bạn...</div>`;
-
-  try {
-    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=precipitation_probability&timezone=auto&forecast_days=1`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error("Không tải được dữ liệu thời tiết.");
-    const data = await res.json();
-
-    const cur = data.current || {};
-    const temp = Math.round(cur.temperature_2m ?? 26);
-    const humidity = Math.round(cur.relative_humidity_2m ?? 75);
-    const wind = Math.round(cur.wind_speed_10m ?? 10);
-    const wInfo = interpretWeatherCode(cur.weather_code);
-
-    const currentHour = new Date().getHours();
-    const probs = data.hourly?.precipitation_probability || [];
-    const nextHoursProbs = probs.slice(currentHour, currentHour + 4).filter((v) => Number.isFinite(v));
-    const rainProb = nextHoursProbs.length ? Math.max(...nextHoursProbs) : 0;
-
-    let verdictClass = "verdict-good";
-    let verdictTitle = "✅ Rất phù hợp để đi chơi!";
-    let verdictDesc = `Tỷ lệ mưa chỉ khoảng ${rainProb}%, trời ${wInfo.text.toLowerCase()} và mát mẻ (${temp}°C). Bạn có thể thoải mái đi dạo phố, chụp ảnh hoặc khám phá quán ngon.`;
-
-    if (rainProb >= 65 || [63, 65, 81, 82, 95, 96, 99].includes(cur.weather_code)) {
-      verdictClass = "verdict-bad";
-      verdictTitle = "⛔ Không nên đi chơi ngoài trời lúc này";
-      verdictDesc = `Tỷ lệ mưa cao (${rainProb}%) kèm ${wInfo.text.toLowerCase()}. Bạn nên ưu tiên quán cà phê, trung tâm thương mại hoặc workshop trong nhà nhé.`;
-    } else if (rainProb >= 35 || [51, 53, 61, 80].includes(cur.weather_code)) {
-      verdictClass = "verdict-warn";
-      verdictTitle = "⚠️ Có thể đi chơi nhưng nhớ mang áo mưa/dù";
-      verdictDesc = `Khả năng có mưa rào khoảng ${rainProb}%. Nên chuẩn bị sẵn áo mưa mỏng và ưu tiên các điểm gần nhau để dễ trú mưa.`;
-    }
-
-    body.innerHTML = `
-      <div style="font-size:12px;color:#6b5b52;margin-bottom:10px;">📍 ${locLabel}</div>
-      <div class="weather-hero">
-        <div>
-          <div class="weather-temp">${temp}°C</div>
-          <div class="weather-desc">${wInfo.text}</div>
-        </div>
-        <div class="weather-icon">${wInfo.icon}</div>
-      </div>
-
-      <div class="weather-grid">
-        <div class="weather-stat">
-          <div class="val">🌧️ ${rainProb}%</div>
-          <div class="lbl">Tỷ lệ mưa</div>
-        </div>
-        <div class="weather-stat">
-          <div class="val">💧 ${humidity}%</div>
-          <div class="lbl">Độ ẩm</div>
-        </div>
-        <div class="weather-stat">
-          <div class="val">💨 ${wind} km/h</div>
-          <div class="lbl">Tốc độ gió</div>
-        </div>
-      </div>
-
-      <div class="verdict-box ${verdictClass}">
-        <div style="font-weight:800;margin-bottom:4px;">${verdictTitle}</div>
-        <div>${verdictDesc}</div>
-      </div>
-    `;
-  } catch (err) {
-    body.innerHTML = `<div class="error-box">Không lấy được dữ liệu thời tiết: ${escapeHtml(err.message)}</div>`;
-  }
-}
-
-// ==========================================
-// 4. CHATBOT HỖ TRỢ GIẢI ĐÁP NGAY LẬP TỨC
-// ==========================================
-function renderChatTab() {
-  const body = document.getElementById("menuBody");
-  body.innerHTML = `
-    <div id="chatBox" class="chat-box">
-      ${chatHistory
-        .map((m) => `<div class="chat-msg ${m.role === "user" ? "user" : "bot"}">${escapeHtml(m.content)}</div>`)
-        .join("")}
-    </div>
-    <form id="chatForm" class="chat-form">
-      <input id="chatInput" class="chat-input" type="text" placeholder="Hỏi bất cứ điều gì..." autocomplete="off" />
-      <button type="submit" class="chat-send">Gửi</button>
-    </form>
-  `;
-
-  const chatBox = document.getElementById("chatBox");
-  chatBox.scrollTop = chatBox.scrollHeight;
-
-  document.getElementById("chatForm").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const input = document.getElementById("chatInput");
-    const text = input.value.trim();
-    if (!text) return;
-
-    chatHistory.push({ role: "user", content: text });
-    input.value = "";
-    renderChatTab();
-
-    const box = document.getElementById("chatBox");
-    const typing = document.createElement("div");
-    typing.className = "chat-msg bot";
-    typing.textContent = "⏳ Đang trả lời...";
-    box.appendChild(typing);
-    box.scrollTop = box.scrollHeight;
-
-    try {
-      const locationContext = currentCoords.lat
-        ? `GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Đà Nẵng & Hội An`
-        : "Đà Nẵng – Hội An";
-
-      const res = await fetch("/api/scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: "chat",
-          messages: chatHistory,
-          locationContext
+          return `
+            <li class="history-card">
+              <button type="button" class="history-open-btn" data-open-id="${item.id}">
+                ${
+                  item.thumb
+                    ? `<img class="history-thumb" src="${item.thumb}" alt="" />`
+                    : `<span class="history-thumb" aria-hidden="true">AI</span>`
+                }
+                <span class="history-meta">
+                  <span class="history-name">${escapeHtml(item.data?.ten_dia_diem || "Kết quả nhận diện")}</span>
+                  <span class="history-sub tabular-nums">${subText}</span>
+                </span>
+              </button>
+              <button type="button" class="history-del-btn" data-del-id="${item.id}" aria-label="Xóa ${escapeHtml(item.data?.ten_dia_diem || "mục này")}">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+              </button>
+            </li>
+          `;
         })
-      });
-      const data = await res.json();
-      chatHistory.push({
-        role: "assistant",
-        content: data.reply || data.error || "Mình chưa nhận được phản hồi, bạn thử lại nhé."
-      });
-    } catch (err) {
-      chatHistory.push({ role: "assistant", content: "Lỗi kết nối: " + err.message });
-    }
-    renderChatTab();
+        .join("")}
+    </ul>
+  `;
+
+  container.querySelectorAll("[data-open-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = Number(btn.dataset.openId);
+      const item = loadHistory().find((x) => x.id === id);
+      if (item) renderDetailView(item.data, item.time, item.thumb, true);
+    });
+  });
+
+  container.querySelectorAll("[data-del-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const id = Number(btn.dataset.delId);
+      const next = loadHistory().filter((x) => x.id !== id);
+      saveHistoryList(next);
+      renderHomeDashboard();
+    });
   });
 }
 
-function openHistoryItem(id) {
-  const item = loadHistory().find((x) => x.id === id);
-  if (!item) return;
-  renderResult(item.data, item.time, true);
-}
-
-function deleteHistoryItem(event, id) {
-  event.stopPropagation();
-  const list = loadHistory().filter((x) => x.id !== id);
-  saveHistoryList(list);
-  renderHistoryTab();
-  ensureCameraPlaying();
-}
-
-function clearAllHistory() {
-  const btn = document.querySelector(".btn-clear-all");
-
-  if (!confirmClearArmed) {
-    confirmClearArmed = true;
-    if (btn) {
-      btn.textContent = "Bấm lại để xóa";
-      btn.style.background = "#dc2626";
-      btn.style.color = "#fff";
-    }
-    clearTimeout(confirmClearTimer);
-    confirmClearTimer = setTimeout(() => {
-      confirmClearArmed = false;
-      if (btn) {
-        btn.textContent = "Xóa tất cả";
-        btn.style.background = "";
-        btn.style.color = "";
-      }
-    }, 3500);
-    return;
+function updateLastThumbPreview() {
+  const list = loadHistory();
+  const img = document.getElementById("lastThumbImg");
+  const icon = document.getElementById("lastThumbIcon");
+  if (list.length && list[0].thumb) {
+    img.src = list[0].thumb;
+    img.hidden = false;
+    icon.hidden = true;
+  } else {
+    img.hidden = true;
+    icon.hidden = false;
   }
-
-  resetClearConfirm();
-  saveHistoryList([]);
-  renderHistoryTab();
-  ensureCameraPlaying();
 }
-
-window.openMenuSheet = openMenuSheet;
-window.openHistoryItem = openHistoryItem;
-window.deleteHistoryItem = deleteHistoryItem;
-window.clearAllHistory = clearAllHistory;
 
 // ==========================================
-// 5. CAMERA, GPS & GIỌNG ĐỌC MP3 (BẤM 1 LẦN NGHE NGAY)
+// 3. CAMERA & GPS
 // ==========================================
 async function startCamera() {
-  if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
+  cameraErrorBanner.hidden = true;
+  stopCamera();
   try {
     currentStream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -390,24 +307,24 @@ async function startCamera() {
     video.srcObject = currentStream;
     video.play().catch(() => {});
   } catch (_) {
-    gpsText.textContent = "Bấm 🖼️ để chọn ảnh";
+    cameraErrorBanner.textContent = "Không mở được camera. Bạn có thể bấm nút Thư viện bên dưới để chọn ảnh có sẵn.";
+    cameraErrorBanner.hidden = false;
   }
 }
 
-function ensureCameraPlaying() {
-  if (!video) return;
-  const track = currentStream?.getVideoTracks?.()[0];
-  if (!track || track.readyState === "ended") {
-    startCamera();
-    return;
-  }
-  if (video.paused) {
-    video.play().catch(() => {});
+function stopCamera() {
+  if (currentStream) {
+    currentStream.getTracks().forEach((t) => t.stop());
+    currentStream = null;
   }
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) ensureCameraPlaying();
+  if (!document.hidden && activeView === "scanner") {
+    const track = currentStream?.getVideoTracks?.()[0];
+    if (!track || track.readyState === "ended") startCamera();
+    else if (video.paused) video.play().catch(() => {});
+  }
 });
 
 function initGPS() {
@@ -429,26 +346,147 @@ function initGPS() {
   );
 }
 
+// ==========================================
+// 4. THỜI TIẾT & CHATBOT
+// ==========================================
+function interpretWeatherCode(code) {
+  if (code === 0) return "Trời quang đãng";
+  if ([1, 2, 3].includes(code)) return "Có mây nhẹ";
+  if ([45, 48].includes(code)) return "Có sương mù";
+  if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(code)) return "Có mưa";
+  if ([95, 96, 99].includes(code)) return "Có dông bão";
+  return "Thời tiết ổn định";
+}
+
+async function renderWeatherView() {
+  const body = document.getElementById("weatherBody");
+  const lat = currentCoords.lat || 15.98;
+  const lng = currentCoords.lng || 108.25;
+
+  body.setAttribute("aria-busy", "true");
+  body.innerHTML = `<div class="skeleton-box"></div><div class="skeleton-box"></div>`;
+
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&hourly=precipitation_probability&timezone=auto&forecast_days=1`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("Không tải được dữ liệu thời tiết.");
+    const data = await res.json();
+
+    const cur = data.current || {};
+    const temp = Math.round(cur.temperature_2m ?? 26);
+    const humidity = Math.round(cur.relative_humidity_2m ?? 75);
+    const wind = Math.round(cur.wind_speed_10m ?? 10);
+    const desc = interpretWeatherCode(cur.weather_code);
+
+    const currentHour = new Date().getHours();
+    const probs = data.hourly?.precipitation_probability || [];
+    const nextProbs = probs.slice(currentHour, currentHour + 4).filter((v) => Number.isFinite(v));
+    const rainProb = nextProbs.length ? Math.max(...nextProbs) : 0;
+
+    let advice = `Tỷ lệ mưa thấp (${rainProb}%), trời ${desc.toLowerCase()}. Rất phù hợp để dạo phố và chụp ảnh ngoài trời.`;
+    if (rainProb >= 65) {
+      advice = `Tỷ lệ mưa cao (${rainProb}%). Nên ưu tiên quán cà phê, bảo tàng hoặc workshop trong nhà.`;
+    } else if (rainProb >= 35) {
+      advice = `Khả năng mưa khoảng ${rainProb}%. Nên mang theo áo mưa mỏng hoặc dù khi di chuyển.`;
+    }
+
+    body.innerHTML = `
+      <div class="weather-card">
+        <div>
+          <div class="weather-temp tabular-nums">${temp}°C</div>
+          <div class="weather-desc">${desc}</div>
+        </div>
+        <div class="tabular-nums" style="font-size:13px;font-weight:700;">Mưa ${rainProb}%</div>
+      </div>
+
+      <div class="mini-grid">
+        <div class="mini-card">
+          <span class="mini-label">Tỷ lệ mưa</span>
+          <span class="mini-val tabular-nums">${rainProb}%</span>
+        </div>
+        <div class="mini-card">
+          <span class="mini-label">Độ ẩm</span>
+          <span class="mini-val tabular-nums">${humidity}%</span>
+        </div>
+        <div class="mini-card">
+          <span class="mini-label">Gió</span>
+          <span class="mini-val tabular-nums">${wind} km/h</span>
+        </div>
+      </div>
+
+      <div class="weather-verdict">
+        <strong>Gợi ý di chuyển:</strong> ${advice}
+      </div>
+    `;
+  } catch (err) {
+    body.innerHTML = `<div class="error-panel">Không lấy được thời tiết: ${escapeHtml(err.message)}</div>`;
+  } finally {
+    body.setAttribute("aria-busy", "false");
+  }
+}
+
+function renderChatView() {
+  const box = document.getElementById("chatBox");
+  box.innerHTML = chatHistory
+    .map((m) => `<div class="chat-msg ${m.role === "user" ? "user" : "bot"}">${escapeHtml(m.content)}</div>`)
+    .join("");
+  box.scrollTop = box.scrollHeight;
+}
+
+document.getElementById("chatForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const input = document.getElementById("chatInput");
+  const text = input.value.trim();
+  if (!text) return;
+
+  chatHistory.push({ role: "user", content: text });
+  input.value = "";
+  renderChatView();
+
+  const box = document.getElementById("chatBox");
+  const typing = document.createElement("div");
+  typing.className = "chat-msg bot";
+  typing.textContent = "Đang trả lời...";
+  box.appendChild(typing);
+  box.scrollTop = box.scrollHeight;
+
+  try {
+    const locationContext = currentCoords.lat
+      ? `GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Đà Nẵng & Hội An`
+      : "Đà Nẵng – Hội An";
+
+    const res = await fetch("/api/scan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "chat", messages: chatHistory, locationContext })
+    });
+    const data = await res.json();
+    chatHistory.push({
+      role: "assistant",
+      content: data.reply || data.error || "Mình chưa nhận được phản hồi, bạn thử lại nhé."
+    });
+  } catch (err) {
+    chatHistory.push({ role: "assistant", content: "Lỗi kết nối: " + err.message });
+  }
+  renderChatView();
+});
+
+// ==========================================
+// 5. GIỌNG ĐỌC HOÀI MY NEURAL (1 CHẠM NGHE NGAY)
+// ==========================================
 function normalizeTtsText(text) {
-  return String(text || "")
-    .replace(/[*#_•]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return String(text || "").replace(/[*#_•]/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function base64ToArrayBuffer(base64) {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) {
-    bytes[i] = binary.charCodeAt(i);
-  }
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return bytes.buffer;
 }
 
 function getOrFetchTtsBuffer(cleanText) {
-  if (ttsBufferCache.has(cleanText)) {
-    return ttsBufferCache.get(cleanText);
-  }
+  if (ttsBufferCache.has(cleanText)) return ttsBufferCache.get(cleanText);
 
   const promise = fetch("/api/scan", {
     method: "POST",
@@ -457,9 +495,7 @@ function getOrFetchTtsBuffer(cleanText) {
   })
     .then(async (res) => {
       const data = await res.json();
-      if (res.ok && data.audioBase64) {
-        return base64ToArrayBuffer(data.audioBase64);
-      }
+      if (res.ok && data.audioBase64) return base64ToArrayBuffer(data.audioBase64);
       throw new Error(data.ttsError || "Không tải được âm thanh");
     })
     .catch((err) => {
@@ -477,24 +513,20 @@ function getOrFetchTtsBuffer(cleanText) {
 
 function prefetchTts(text) {
   const cleanText = normalizeTtsText(text);
-  if (!cleanText) return;
-  getOrFetchTtsBuffer(cleanText).catch(() => {});
+  if (cleanText) getOrFetchTtsBuffer(cleanText).catch(() => {});
 }
 
-// Mở khóa loa iPhone ngay cú chạm đầu tiên
 function unlockAudioContext() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
   if (!audioCtx) audioCtx = new AudioCtx();
-  if (audioCtx.state === "suspended") {
-    audioCtx.resume().catch(() => {});
-  }
+  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
   try {
-    const silentBuffer = audioCtx.createBuffer(1, 1, 22050);
-    const silentSource = audioCtx.createBufferSource();
-    silentSource.buffer = silentBuffer;
-    silentSource.connect(audioCtx.destination);
-    silentSource.start(0);
+    const silent = audioCtx.createBuffer(1, 1, 22050);
+    const src = audioCtx.createBufferSource();
+    src.buffer = silent;
+    src.connect(audioCtx.destination);
+    src.start(0);
   } catch (_) {}
   return audioCtx;
 }
@@ -508,7 +540,7 @@ function decodeAudio(ctx, arrayBuffer) {
 function updateSpeakButton(playing) {
   const btn = document.getElementById("speakBtn");
   if (!btn) return;
-  btn.textContent = playing ? "⏹️ Dừng thuyết minh" : "🔊 Nghe thuyết minh";
+  btn.textContent = playing ? "Dừng thuyết minh" : "Nghe thuyết minh";
 }
 
 function stopSpeaking() {
@@ -529,7 +561,6 @@ async function speakText(text) {
     stopSpeaking();
     return;
   }
-
   const cleanText = normalizeTtsText(text);
   if (!cleanText) return;
 
@@ -538,20 +569,15 @@ async function speakText(text) {
 
   const session = ++speechSessionId;
   isSpeaking = true;
-
   const btn = document.getElementById("speakBtn");
-  if (btn) btn.textContent = "⏳ Đang chuẩn bị giọng đọc...";
+  if (btn) btn.textContent = "Đang tải giọng...";
 
   try {
-    const arrayBuffer = await getOrFetchTtsBuffer(cleanText);
+    const buffer = await getOrFetchTtsBuffer(cleanText);
     if (session !== speechSessionId) return;
-
-    const decoded = await decodeAudio(ctx, arrayBuffer);
+    const decoded = await decodeAudio(ctx, buffer);
     if (session !== speechSessionId) return;
-
-    if (ctx.state === "suspended") {
-      await ctx.resume();
-    }
+    if (ctx.state === "suspended") await ctx.resume();
 
     const source = ctx.createBufferSource();
     source.buffer = decoded;
@@ -559,7 +585,6 @@ async function speakText(text) {
     activeSource = source;
 
     updateSpeakButton(true);
-
     source.onended = () => {
       if (session === speechSessionId) {
         activeSource = null;
@@ -567,43 +592,51 @@ async function speakText(text) {
         updateSpeakButton(false);
       }
     };
-
     source.start(0);
   } catch (_) {
     if (session === speechSessionId) {
       stopSpeaking();
       if (btn) {
-        btn.textContent = "⚠️ Mạng chậm, bấm thử lại";
+        btn.textContent = "Thử nghe lại";
         setTimeout(() => {
           if (!isSpeaking) updateSpeakButton(false);
-        }, 2500);
+        }, 2200);
       }
     }
   }
 }
 
-function closeSheet() {
-  stopSpeaking();
-  resetClearConfirm();
-  sheet.classList.remove("open");
-  ensureCameraPlaying();
+// ==========================================
+// 6. QUÉT ẢNH & HIỂN THỊ MÀN HÌNH CHI TIẾT
+// ==========================================
+function makeThumbnail(sourceCanvas) {
+  try {
+    const thumbCanvas = document.createElement("canvas");
+    const maxW = 360;
+    const scale = Math.min(1, maxW / sourceCanvas.width);
+    thumbCanvas.width = Math.round(sourceCanvas.width * scale);
+    thumbCanvas.height = Math.round(sourceCanvas.height * scale);
+    thumbCanvas.getContext("2d").drawImage(sourceCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
+    return thumbCanvas.toDataURL("image/jpeg", 0.68);
+  } catch (_) {
+    return "";
+  }
 }
 
-window.speakText = speakText;
-window.closeSheet = closeSheet;
-
-// ==========================================
-// 6. QUÉT ẢNH & HIỂN THỊ KẾT QUẢ
-// ==========================================
 async function scanBase64(imageBase64, thumbDataUrl) {
   const startTime = performance.now();
   statusPill.classList.add("show");
-  closeSheet();
 
   try {
+    const modeHint = scanMode === "food"
+      ? "Ưu tiên phân tích món ăn & calo. "
+      : scanMode === "place"
+      ? "Ưu tiên nhận diện địa điểm / di tích. "
+      : "";
+
     const locationContext = currentCoords.lat
-      ? `GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Đà Nẵng & Hội An`
-      : "Đà Nẵng – Hội An";
+      ? `${modeHint}GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Đà Nẵng & Hội An`
+      : `${modeHint}Đà Nẵng – Hội An`;
 
     const res = await fetch("/api/scan", {
       method: "POST",
@@ -620,117 +653,230 @@ async function scanBase64(imageBase64, thumbDataUrl) {
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
 
     if (!res.ok || data.error) {
-      renderError(data.debug || "");
+      renderErrorDetail(data.debug || "", thumbDataUrl);
     } else {
       addToHistory(data, thumbDataUrl);
-      renderResult(data, `${elapsed}s`, false);
+      renderDetailView(data, `${elapsed}s`, thumbDataUrl, false);
     }
   } catch (err) {
-    renderError(err?.message || "Lỗi kết nối mạng");
+    renderErrorDetail(err?.message || "Lỗi kết nối mạng", thumbDataUrl);
   } finally {
     statusPill.classList.remove("show");
   }
 }
 
-function renderError(debugMsg = "") {
-  const debugHtml = debugMsg
-    ? `<div style="font-size:11px;color:#8c7a70;margin-top:8px;word-break:break-word;">Chi tiết: ${escapeHtml(debugMsg)}</div>`
-    : "";
-
-  sheetContent.innerHTML = `
-    <div class="sheet-header">
-      <div class="badges"><span class="badge-type">THỬ LẠI</span></div>
-      <button class="btn-close" onclick="closeSheet()">✕</button>
-    </div>
-    <h2 class="title">Chưa nhận diện được</h2>
-    <div class="error-box">${FRIENDLY_ERROR_MSG}${debugHtml}</div>
-    <div class="action-row" style="margin-top: 14px;">
-      <button class="btn-primary" onclick="closeSheet()">🔄 Quét lại ngay</button>
-    </div>
-  `;
-  sheet.classList.add("open");
+function setDetailHero(thumbDataUrl) {
+  const img = document.getElementById("detailHeroImg");
+  const placeholder = document.getElementById("detailHeroPlaceholder");
+  if (thumbDataUrl) {
+    img.src = thumbDataUrl;
+    img.hidden = false;
+    placeholder.hidden = true;
+  } else {
+    img.hidden = true;
+    placeholder.hidden = false;
+  }
 }
 
-function renderResult(data, timeOrElapsed, fromHistory = false) {
-  currentSpeechText = `${data.ten_dia_diem || ""}. ${data.cau_chuyen_lich_su || ""} ${data.giai_thoai_dac_biet || ""}`;
+function renderErrorDetail(debugMsg, thumbDataUrl) {
+  stopCamera();
+  setDetailHero(thumbDataUrl);
+  const sheet = document.getElementById("detailSheet");
+  sheet.innerHTML = `
+    <div class="detail-pills"><span class="pill-tag">THỬ LẠI</span></div>
+    <h2 class="detail-title">Chưa nhận diện được</h2>
+    <div class="error-panel">
+      ${FRIENDLY_ERROR_MSG}
+      ${debugMsg ? `<div class="error-debug">Chi tiết: ${escapeHtml(debugMsg)}</div>` : ""}
+    </div>
+    <div class="detail-actions">
+      <button type="button" class="btn-pill btn-secondary" id="errHomeBtn">Trang chủ</button>
+      <button type="button" class="btn-pill btn-primary" id="errRetryBtn">Quét lại</button>
+    </div>
+  `;
+  navigateTo("detail");
+  document.getElementById("errHomeBtn").addEventListener("click", () => navigateTo("home"));
+  document.getElementById("errRetryBtn").addEventListener("click", () => navigateTo("scanner"));
+}
 
-  // Tải ngầm giọng đọc ngay khi kết quả vừa hiện -> bấm 1 phát là nghe luôn
+function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
+  stopCamera();
+  setDetailHero(thumbDataUrl);
+
+  currentSpeechText = `${data.ten_dia_diem || ""}. ${data.cau_chuyen_lich_su || ""} ${data.giai_thoai_dac_biet || ""}`;
   prefetchTts(currentSpeechText);
 
   const sp = data.thong_tin_san_pham;
+  const kcalNum = parseCalories(sp?.calo_uoc_tinh);
+  const highlightText = sp?.hien_thi && sp.calo_uoc_tinh
+    ? `Ước tính: ${sp.calo_uoc_tinh}`
+    : (data.dia_chi || "Đà Nẵng – Hội An");
+
+  const ringBlock = sp && sp.hien_thi ? `
+    <div class="ring-grid">
+      <div class="ring-tile">
+        <span class="ring-tile-label">Calo</span>
+        <div class="ring-mini-wrap">
+          <svg class="ring-mini-svg" viewBox="0 0 60 60" aria-hidden="true">
+            <circle class="ring-mini-bg" cx="30" cy="30" r="24" />
+            <circle cx="30" cy="30" r="24" fill="none" stroke="#94D82D" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="42" />
+          </svg>
+          <span class="ring-mini-val tabular-nums">${kcalNum > 0 ? kcalNum : "N/A"}</span>
+        </div>
+      </div>
+      <div class="ring-tile">
+        <span class="ring-tile-label">Sức khỏe</span>
+        <div class="ring-mini-wrap">
+          <svg class="ring-mini-svg" viewBox="0 0 60 60" aria-hidden="true">
+            <circle class="ring-mini-bg" cx="30" cy="30" r="24" />
+            <circle cx="30" cy="30" r="24" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="50" />
+          </svg>
+          <span class="ring-mini-val">Tốt</span>
+        </div>
+      </div>
+      <div class="ring-tile">
+        <span class="ring-tile-label">Tốc độ</span>
+        <div class="ring-mini-wrap">
+          <svg class="ring-mini-svg" viewBox="0 0 60 60" aria-hidden="true">
+            <circle class="ring-mini-bg" cx="30" cy="30" r="24" />
+            <circle cx="30" cy="30" r="24" fill="none" stroke="#FB923C" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="35" />
+          </svg>
+          <span class="ring-mini-val tabular-nums">${escapeHtml(timeOrElapsed)}</span>
+        </div>
+      </div>
+    </div>
+  ` : "";
+
   const productBlock = sp && sp.hien_thi ? `
-    <div class="ai-product-card">
-      <h4>🥗 Dinh dưỡng & Thông tin mua hàng</h4>
-      <p><strong>🔥 Chỉ số Calo:</strong> ${escapeHtml(sp.calo_uoc_tinh || "Đang cập nhật")}</p>
-      <p><strong>💚 Sức khỏe:</strong> ${escapeHtml(sp.tot_cho_suc_khoe || "Đang cập nhật")}</p>
-      <p><strong>📦 Chi tiết:</strong> ${escapeHtml(sp.chi_tiet_san_pham || "Đang cập nhật")}</p>
-      <p><strong>🛒 Nơi mua gợi ý:</strong> ${escapeHtml(sp.noi_mua_goi_y || "Các cửa hàng uy tín tại Đà Nẵng – Hội An")}</p>
+    <div class="info-block">
+      <h3>Dinh dưỡng & Nơi mua</h3>
+      <p><strong>Sức khỏe:</strong> ${escapeHtml(sp.tot_cho_suc_khoe || "Đang cập nhật")}</p>
+      <p><strong>Chi tiết:</strong> ${escapeHtml(sp.chi_tiet_san_pham || "Đang cập nhật")}</p>
+      <p><strong>Nơi mua gợi ý:</strong> ${escapeHtml(sp.noi_mua_goi_y || "Đà Nẵng – Hội An")}</p>
     </div>
   ` : "";
 
   const hv = data.han_viet;
   const hanVietBlock = hv && hv.co_han_viet ? `
-    <div class="card">
-      <h3>🏮 Giải nghĩa Hán – Nôm</h3>
-      <p><strong>Chữ gốc:</strong> ${escapeHtml(hv.chu_goc || "")} (${escapeHtml(hv.phien_am || "")})</p>
+    <div class="info-block">
+      <h3>Giải nghĩa Hán – Nôm</h3>
+      <p><strong>${escapeHtml(hv.chu_goc || "")}</strong> (${escapeHtml(hv.phien_am || "")})</p>
       <p>${escapeHtml(hv.y_nghia_tong_the || "")}</p>
     </div>
   ` : "";
 
-  const mapButtonBlock = data.hien_chi_duong
-    ? `<a class="ai-map-btn" href="${data.chi_duong_url}" target="_blank" rel="noopener">📍 Chỉ đường qua Google Maps</a>`
-    : `<a class="ai-map-btn" href="${data.google_maps_url}" target="_blank" rel="noopener">🛒 Tìm địa chỉ mua vật phẩm này</a>`;
-
   const reviewsHtml = (data.danh_gia_ban_dia?.review_mau || [])
-    .map((r) => `<div class="review-item"><span class="tag-local">THỔ ĐỊA</span>${escapeHtml(r)}</div>`)
+    .map((r) => `<div class="review-chip">${escapeHtml(r)}</div>`)
     .join("");
 
-  const badgeRight = fromHistory
-    ? `<span class="badge-live" style="background:#fef3c7;color:#92400e;">🕒 Đã lưu</span>`
-    : `<span class="badge-live">✓ Live AI</span>`;
+  const mapUrl = data.hien_chi_duong ? data.chi_duong_url : data.google_maps_url;
+  const mapLabel = data.hien_chi_duong ? "Chỉ đường" : "Tìm nơi mua";
 
-  sheetContent.innerHTML = `
-    <div class="sheet-header">
-      <div class="badges">
-        <span class="badge-type">${escapeHtml(data.loai_doi_tuong || "NHẬN DIỆN")}</span>
-        ${badgeRight}
-      </div>
-      <button class="btn-close" onclick="closeSheet()">✕</button>
+  const sheet = document.getElementById("detailSheet");
+  sheet.innerHTML = `
+    <div class="detail-pills">
+      <span class="pill-tag accent">${escapeHtml(data.loai_doi_tuong || "NHẬN DIỆN")}</span>
+      <span class="pill-tag tabular-nums">${escapeHtml(data.nien_dai_hoac_gia || (fromHistory ? timeOrElapsed : "Đà Nẵng – Hội An"))}</span>
     </div>
 
-    <h2 class="title">${escapeHtml(data.ten_dia_diem || "Kết quả nhận diện")}</h2>
-    <div class="meta">📍 ${escapeHtml(data.dia_chi || "Đà Nẵng – Hội An")} • ${escapeHtml(data.nien_dai_hoac_gia || "")} • ${fromHistory ? "🕒 " : "⚡ "}${timeOrElapsed}</div>
+    <h2 class="detail-title">${escapeHtml(data.ten_dia_diem || "Kết quả nhận diện")}</h2>
 
-    <div class="action-row">
-      <button id="speakBtn" class="btn-primary" onclick="speakText(currentSpeechText)">🔊 Nghe thuyết minh</button>
-      ${mapButtonBlock}
+    <div class="highlight-bar">
+      <span>${escapeHtml(highlightText)}</span>
+      <span class="tabular-nums" style="font-size:12px;color:#62626B;">${escapeHtml(timeOrElapsed)}</span>
     </div>
 
-    <div class="card">
-      <h3>📜 Thông tin & Câu chuyện</h3>
+    ${ringBlock}
+
+    <div class="info-block">
+      <h3>Thông tin & Câu chuyện</h3>
       <p>${escapeHtml(data.cau_chuyen_lich_su || "")}</p>
     </div>
 
-    <div class="card">
-      <h3>✨ Điểm độc đáo</h3>
+    <div class="info-block">
+      <h3>Điểm độc đáo</h3>
       <p>${escapeHtml(data.giai_thoai_dac_biet || "")}</p>
     </div>
 
     ${productBlock}
     ${hanVietBlock}
 
-    <div class="card">
-      <h3>💬 Đánh giá từ người địa phương</h3>
+    <div class="info-block">
+      <h3>Đánh giá từ người địa phương</h3>
       <p>${escapeHtml(data.danh_gia_ban_dia?.tom_tat || "")}</p>
       ${reviewsHtml}
     </div>
+
+    <div class="detail-actions">
+      <button type="button" id="speakBtn" class="btn-pill btn-secondary">Nghe thuyết minh</button>
+      <a class="btn-pill btn-primary" href="${mapUrl || "#"}" target="_blank" rel="noopener">${mapLabel}</a>
+    </div>
   `;
-  sheet.classList.add("open");
+
+  navigateTo("detail");
+  sheet.scrollTop = 0;
+  document.getElementById("speakBtn").addEventListener("click", () => speakText(currentSpeechText));
 }
 
 // ==========================================
-// 7. SỰ KIỆN NÚT BẤM
+// 7. GẮN SỰ KIỆN TƯƠNG TÁC
 // ==========================================
+document.querySelectorAll("[data-nav]").forEach((btn) => {
+  btn.addEventListener("click", () => navigateTo(btn.dataset.nav));
+});
+
+document.getElementById("btnQuickWeather").addEventListener("click", () => navigateTo("weather"));
+document.getElementById("btnQuickChat").addEventListener("click", () => navigateTo("chat"));
+document.getElementById("btnRefreshWeather").addEventListener("click", () => renderWeatherView());
+
+document.getElementById("detailBackBtn").addEventListener("click", () => navigateTo(previousView || "home"));
+document.getElementById("detailCloseBtn").addEventListener("click", () => navigateTo("home"));
+
+// Xóa lịch sử bằng AlertDialog chuẩn (không làm đơ camera iOS)
+document.getElementById("btnClearHistory").addEventListener("click", () => {
+  if (typeof confirmDialog.showModal === "function") {
+    confirmDialog.showModal();
+  } else {
+    saveHistoryList([]);
+    renderHomeDashboard();
+  }
+});
+
+document.getElementById("dialogCancelBtn").addEventListener("click", () => confirmDialog.close());
+document.getElementById("dialogConfirmBtn").addEventListener("click", () => {
+  confirmDialog.close();
+  saveHistoryList([]);
+  renderHomeDashboard();
+});
+
+// Chọn chế độ trên Scanner
+document.querySelectorAll(".mode-pill[data-mode]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    scanMode = btn.dataset.mode;
+    document.querySelectorAll(".mode-pill[data-mode]").forEach((b) => {
+      const active = b === btn;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-pressed", String(active));
+    });
+  });
+});
+
+document.getElementById("uploadBtn").addEventListener("click", () => fileInput.click());
+
+document.getElementById("lastThumbBtn").addEventListener("click", () => {
+  const list = loadHistory();
+  if (list.length) {
+    renderDetailView(list[0].data, list[0].time, list[0].thumb, true);
+  } else {
+    navigateTo("home");
+  }
+});
+
+document.getElementById("switchBtn").addEventListener("click", () => {
+  facingMode = facingMode === "environment" ? "user" : "environment";
+  startCamera();
+});
+
 document.getElementById("captureBtn").addEventListener("click", () => {
   if (!video.videoWidth) return;
   const maxW = 800;
@@ -743,18 +889,7 @@ document.getElementById("captureBtn").addEventListener("click", () => {
   scanBase64(base64, thumb);
 });
 
-document.getElementById("switchBtn").addEventListener("click", () => {
-  facingMode = facingMode === "environment" ? "user" : "environment";
-  startCamera();
-});
-
-document.getElementById("uploadBtn").addEventListener("click", () => {
-  document.getElementById("fileInput").click();
-});
-
-document.getElementById("menuBtn").addEventListener("click", () => openMenuSheet("history"));
-
-document.getElementById("fileInput").addEventListener("change", (e) => {
+fileInput.addEventListener("change", (e) => {
   const file = e.target.files?.[0];
   if (!file) return;
   const reader = new FileReader();
@@ -773,8 +908,10 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
     img.src = reader.result;
   };
   reader.readAsDataURL(file);
+  e.target.value = "";
 });
 
+// Khởi chạy ban đầu
 updateHistoryBadge();
-startCamera();
+renderHomeDashboard();
 initGPS();
