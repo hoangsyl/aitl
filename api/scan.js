@@ -1,9 +1,9 @@
 /**
- * Bản quyền thuộc về AIvolution Team 
  * 
- *  Bản quyền thuộc về AIvolution Team 
+ * Bản quyền thuộc về AIvolution Team
  *  
- *  Bản quyền thuộc về AIvolution Team 
+ * Bản quyền thuộc về AIvolution Team
+ *  
  */
 
 const tls = require("tls");
@@ -15,8 +15,8 @@ const crypto = require("crypto");
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
   GEMINI_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  GEMINI_TIMEOUT_MS: 8500,
-  GROQ_TIMEOUT_MS: 6500,
+  GEMINI_TIMEOUT_MS: 9500,
+  GROQ_TIMEOUT_MS: 7000,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 10 * 60 * 1000,
   KEY_COOLDOWN_MS: 60 * 1000,
@@ -242,18 +242,18 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 }
 
 // ==========================================
-// 4. PROMPT GỌN SÚC TÍCH (XUẤT JSON NHANH)
+// 4. PROMPT ĐẦY ĐỦ CHI TIẾT & NHANH
 // ==========================================
 function buildVisionPrompt(locationContext) {
-  return `Chuyên gia văn hóa, ẩm thực & du lịch Đà Nẵng – Hội An.
+  return `Chuyên gia văn hóa, lịch sử, ẩm thực & du lịch Đà Nẵng – Hội An.
 Ngữ cảnh: ${locationContext || "Đà Nẵng – Hội An"}.
 
-QUY TẮC NHẬN DIỆN NHANH & CHÍNH XÁC:
+QUY TẮC NHẬN DIỆN & PHÂN BIỆT:
 - Cao lầu: sợi mì dày vuông màu vàng/nâu, thịt xá xíu, ram/da heo chiên giòn, ít nước xốt, KHÔNG đậu phộng rang.
 - Mì Quảng: sợi mì dẹt bản to, có đậu phộng rang, bánh tráng mè, tôm/thịt/trứng, nước dùng sâm sấp.
 - Bún bò: sợi bún tròn to, nước cam đỏ có váng dầu điều/sả, bắp bò/chả/giò. Phở: sợi dẹt trắng mỏng, nước trong thanh.
 - Đồ vật thường ngày: nhận diện đúng tên vật thể thuộc "Vật thể" hoặc "Sản phẩm". Chỉ báo lỗi khi ảnh tối đen hoặc nhòe hoàn toàn.
-- Viết tiếng Việt súc tích, rõ ràng, tự nhiên.
+- Viết tiếng Việt rõ ràng, mạch lạc, có chiều sâu, ngắt câu chuẩn để nghe thuyết minh tự nhiên.
 
 CHỈ TRẢ VỀ JSON HỢP LỆ:
 {
@@ -263,14 +263,14 @@ CHỈ TRẢ VỀ JSON HỢP LỆ:
   "ten_dia_diem": "Tên chính xác",
   "dia_chi": "Khu vực Đà Nẵng / Hội An hoặc xuất xứ",
   "nien_dai_hoac_gia": "Niên đại hoặc khoảng giá VNĐ",
-  "cau_chuyen_lich_su": "1-2 câu ngắn gọn về nguồn gốc/bản sắc.",
-  "giai_thoai_dac_biet": "2 câu miêu tả điểm nổi bật trong ảnh.",
+  "cau_chuyen_lich_su": "3-4 câu chi tiết về nguồn gốc, lịch sử hình thành, vai trò hoặc giá trị văn hóa của đối tượng.",
+  "giai_thoai_dac_biet": "3-4 câu miêu tả kỹ các chi tiết thực tế thấy trong ảnh, điểm đặc sắc, công năng hoặc nét độc đáo đáng chú ý.",
   "thong_tin_san_pham": {
     "hien_thi": false,
     "calo_uoc_tinh": "VD: 450 - 550 kcal hoặc Không áp dụng",
-    "tot_cho_suc_khoe": "Nhận xét ngắn gọn dinh dưỡng/lưu ý",
-    "chi_tiet_san_pham": "Nguyên liệu hoặc chất liệu chính",
-    "noi_mua_goi_y": "Gợi ý tại Đà Nẵng hoặc Hội An",
+    "tot_cho_suc_khoe": "2 câu phân tích lợi ích, cách dùng hợp lý hoặc lưu ý bảo quản/sức khỏe",
+    "chi_tiet_san_pham": "Nguyên liệu, cấu tạo hoặc chất liệu nổi bật",
+    "noi_mua_goi_y": "Gợi ý cụ thể tại Đà Nẵng hoặc Hội An",
     "tu_khoa_mua_hang": "Từ khóa Google Maps"
   },
   "han_viet": {
@@ -281,8 +281,8 @@ CHỈ TRẢ VỀ JSON HỢP LỆ:
     "y_nghia_tong_the": ""
   },
   "danh_gia_ban_dia": {
-    "tom_tat": "1 câu nhận xét thực tế.",
-    "review_mau": ["Nhận xét ngắn 1", "Nhận xét ngắn 2"]
+    "tom_tat": "2 câu nhận xét thực tế từ người địa phương và du khách.",
+    "review_mau": ["Nhận xét thực tế chi tiết 1", "Nhận xét thực tế chi tiết 2"]
   }
 }
 Với món ăn, đồ uống hoặc sản phẩm: đặt "la_dia_diem": false và "thong_tin_san_pham.hien_thi": true.`;
@@ -300,8 +300,8 @@ async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
     const generationConfig = {
-      temperature: 0.15,
-      maxOutputTokens: 1200,
+      temperature: 0.2,
+      maxOutputTokens: 1500,
       responseMimeType: "application/json"
     };
     if (model.includes("3.8-flash")) {
@@ -372,7 +372,7 @@ async function runGeminiVision({ apiKeys, prompt, imageBase64 }) {
 async function handleGeminiChat({ apiKeys, messages, locationContext }) {
   const systemPrompt = `Bạn là trợ lý du lịch, ẩm thực và dinh dưỡng AIvolution am hiểu sâu sắc Đà Nẵng – Hội An.
 Vị trí hiện tại của người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
-Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác và dễ đọc trên điện thoại.`;
+Trả lời bằng tiếng Việt tự nhiên, chi tiết vừa đủ, chính xác và dễ đọc trên điện thoại.`;
 
   const contents = (Array.isArray(messages) ? messages.slice(-10) : []).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -383,7 +383,7 @@ Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác và d�
     for (const apiKey of apiKeys) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = { temperature: 0.4, maxOutputTokens: 650 };
+        const generationConfig = { temperature: 0.4, maxOutputTokens: 750 };
         if (model.includes("3.8-flash")) {
           generationConfig.thinkingConfig = { thinkingBudget: 0 };
         }
@@ -481,8 +481,8 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64 }) {
       },
       body: JSON.stringify({
         model,
-        temperature: 0.15,
-        max_tokens: 800,
+        temperature: 0.2,
+        max_tokens: 1100,
         messages: [
           {
             role: "user",
@@ -588,7 +588,7 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác và thực tế.`;
           body: JSON.stringify({
             model,
             temperature: 0.4,
-            max_tokens: 550,
+            max_tokens: 600,
             messages: chatMessages
           })
         });
