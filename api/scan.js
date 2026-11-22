@@ -1,9 +1,9 @@
 /**
- * AIvolution bản quyền 
- * 
- *  - 
- *  - 
- *  - 
+ * Bản quyền thuộc về AIvolution Team
+ * Bản quyền thuộc về AIvolution Team
+ * Bản quyền thuộc về AIvolution Team
+ * Bản quyền thuộc về AIvolution Team
+ * Bản quyền thuộc về AIvolution Team
  */
 
 const tls = require("tls");
@@ -14,7 +14,7 @@ const crypto = require("crypto");
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GEMINI_MODELS: ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
+  GEMINI_MODELS: ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
   GEMINI_TIMEOUT_MS: 16000,
   GROQ_TIMEOUT_MS: 7500,
   TTS_TIMEOUT_MS: 4500,
@@ -312,7 +312,7 @@ async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
       maxOutputTokens: 2048,
       responseMimeType: "application/json"
     };
-    if (model.includes("2.5-flash")) {
+    if (model.includes("flash")) {
       generationConfig.thinkingConfig = { thinkingBudget: 0 };
     }
 
@@ -392,7 +392,7 @@ Trả lời bằng tiếng Việt tự nhiên, chuyên nghiệp, chính xác, s�
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
         const generationConfig = { temperature: 0.4, maxOutputTokens: 800 };
-        if (model.includes("2.5-flash")) {
+        if (model.includes("flash")) {
           generationConfig.thinkingConfig = { thinkingBudget: 0 };
         }
 
