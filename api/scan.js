@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (GROQ LÀM CHÍNH – SIÊU NHANH 2–4s)
+// 1. CẤU HÌNH HỆ THỐNG 
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
