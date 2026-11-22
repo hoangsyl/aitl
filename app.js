@@ -10,6 +10,7 @@ const views = {
   home: document.getElementById("viewHome"),
   weather: document.getElementById("viewWeather"),
   chat: document.getElementById("viewChat"),
+  history: document.getElementById("viewHistory"),
   scanner: document.getElementById("viewScanner"),
   detail: document.getElementById("viewDetail")
 };
@@ -40,6 +41,7 @@ let currentCoords = { lat: null, lng: null };
 let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
+let syncNavGlassFn = null;
 
 // Web Audio API + Fallback Audio + Bộ đệm tải sẵn giọng Hoài My
 let audioCtx = null;
@@ -124,7 +126,7 @@ function navigateTo(viewName) {
   bottomNav.hidden = viewName === "scanner" || viewName === "detail";
 
   document.querySelectorAll(".bottom-nav .nav-btn").forEach((btn) => {
-    const isMatch = btn.dataset.nav === viewName && btn.id !== "navHistoryBtn";
+    const isMatch = btn.dataset.nav === viewName;
     btn.classList.toggle("active", isMatch);
     if (isMatch) btn.setAttribute("aria-current", "page");
     else btn.removeAttribute("aria-current");
@@ -142,6 +144,13 @@ function navigateTo(viewName) {
   } else if (viewName === "chat") {
     stopCamera();
     renderChatView();
+  } else if (viewName === "history") {
+    stopCamera();
+    renderHomeDashboard();
+  }
+
+  if (typeof syncNavGlassFn === "function" && !bottomNav.hidden) {
+    requestAnimationFrame(() => syncNavGlassFn());
   }
 }
 
@@ -289,9 +298,11 @@ function renderHomeDashboard() {
   document.getElementById("barProducts").style.transform = `scaleX(${Math.max(0.12, productCount / maxCat)})`;
 
   const clearBtn = document.getElementById("btnClearHistory");
-  clearBtn.hidden = list.length === 0 && totalScans === 0;
+  if (clearBtn) clearBtn.hidden = list.length === 0 && totalScans === 0;
 
   const container = document.getElementById("homeHistoryContainer");
+  if (!container) return;
+
   if (!list.length) {
     container.innerHTML = `
       <div class="empty-card">
@@ -1626,7 +1637,10 @@ initGPS();
     if (activeView === "chat") {
       return bottomNav.querySelector('.nav-btn[data-nav="chat"]');
     }
-    return bottomNav.querySelector('.nav-btn[data-nav="home"]:not(#navHistoryBtn)');
+    if (activeView === "history") {
+      return bottomNav.querySelector("#navHistoryBtn");
+    }
+    return bottomNav.querySelector('.nav-btn[data-nav="home"]');
   }
 
   function snapGlassToButton(btn, scale = 1) {
@@ -1647,6 +1661,10 @@ initGPS();
     glassPill.classList.add("is-visible");
     glassPill.style.transform = `translate3d(${leftX.toFixed(1)}px, -50%, 0) scale(${scale})`;
   }
+
+  syncNavGlassFn = () => {
+    if (!isHolding) snapGlassToButton(getActiveTabButton(), 1);
+  };
 
   function moveGlassTo(clientX, dragging) {
     const navRect = bottomNav.getBoundingClientRect();
@@ -1716,7 +1734,6 @@ initGPS();
     snapGlassToButton(getActiveTabButton(), 1);
   });
 
-  // Đồng bộ vị trí giọt kính khi chuyển màn hình hoặc xoay màn hình
   const observer = new MutationObserver(() => {
     if (!isHolding && !bottomNav.hidden) {
       requestAnimationFrame(() => snapGlassToButton(getActiveTabButton(), 1));
