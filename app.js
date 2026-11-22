@@ -530,39 +530,44 @@ function getWeatherIconSvg(code, size = 28, isDay = 1) {
   const partly = [1, 2].includes(code);
 
   if (storm) {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <path d="M9 21h14a5 5 0 0 0 .8-9.94A7 7 0 0 0 10.2 9.4 4.5 4.5 0 0 0 9 21Z" fill="#CBD5E1"/>
-      <path d="M16 19l-2.5 5h2.4l-1.1 4.5L20 22h-2.5L19 19h-3Z" fill="#FACC15"/>
-      <path d="M10.5 24l-1 3M22 24l-1 3" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
+    return `<svg class="wx-anim-icon wx-is-storm" width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path class="wx-cloud" d="M9 21h14a5 5 0 0 0 .8-9.94A7 7 0 0 0 10.2 9.4 4.5 4.5 0 0 0 9 21Z" fill="#CBD5E1"/>
+      <path class="wx-bolt" d="M16 19l-2.5 5h2.4l-1.1 4.5L20 22h-2.5L19 19h-3Z" fill="#FACC15"/>
+      <path class="wx-drop wx-drop-1" d="M10.5 23l-1 3.5" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
+      <path class="wx-drop wx-drop-2" d="M22 23l-1 3.5" stroke="#38BDF8" stroke-width="2" stroke-linecap="round"/>
     </svg>`;
   }
   if (rain) {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <path d="M9 20h14a5 5 0 0 0 .8-9.94A7 7 0 0 0 10.2 8.4 4.5 4.5 0 0 0 9 20Z" fill="#E2E8F0"/>
-      <path d="M11 23l-1.2 4M16 23l-1.2 4M21 23l-1.2 4" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>
+    return `<svg class="wx-anim-icon wx-is-rain" width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path class="wx-cloud" d="M9 20h14a5 5 0 0 0 .8-9.94A7 7 0 0 0 10.2 8.4 4.5 4.5 0 0 0 9 20Z" fill="#E2E8F0"/>
+      <path class="wx-drop wx-drop-1" d="M11 22.5l-1.2 4" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>
+      <path class="wx-drop wx-drop-2" d="M16 22.5l-1.2 4" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>
+      <path class="wx-drop wx-drop-3" d="M21 22.5l-1.2 4" stroke="#38BDF8" stroke-width="2.2" stroke-linecap="round"/>
     </svg>`;
   }
   if (cloudy) {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
-      <path d="M8.5 23h15a5 5 0 0 0 .7-9.95A7.2 7.2 0 0 0 10 11.4 4.8 4.8 0 0 0 8.5 23Z" fill="#CBD5E1"/>
+    return `<svg class="wx-anim-icon wx-is-cloudy" width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+      <path class="wx-cloud" d="M8.5 23h15a5 5 0 0 0 .7-9.95A7.2 7.2 0 0 0 10 11.4 4.8 4.8 0 0 0 8.5 23Z" fill="#CBD5E1"/>
     </svg>`;
   }
   if (partly) {
-    return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+    return `<svg class="wx-anim-icon wx-is-partly" width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
       ${
         isDay
-          ? `<circle cx="20.5" cy="11.5" r="5" fill="#FBBF24"/>`
-          : `<path d="M22.5 7.5a5.2 5.2 0 1 0 3.2 9.3A5.8 5.8 0 0 1 22.5 7.5Z" fill="#E2E8F0"/>`
+          ? `<circle class="wx-sun-orb" cx="20.5" cy="11.5" r="5" fill="#FBBF24"/>`
+          : `<path class="wx-moon-orb" d="M22.5 7.5a5.2 5.2 0 1 0 3.2 9.3A5.8 5.8 0 0 1 22.5 7.5Z" fill="#E2E8F0"/>`
       }
-      <path d="M8 24h14a4.5 4.5 0 0 0 .6-8.96A6.2 6.2 0 0 0 10.4 13.8 4.2 4.2 0 0 0 8 24Z" fill="#F8FAFC"/>
+      <path class="wx-cloud" d="M8 24h14a4.5 4.5 0 0 0 .6-8.96A6.2 6.2 0 0 0 10.4 13.8 4.2 4.2 0 0 0 8 24Z" fill="#F8FAFC"/>
     </svg>`;
   }
-  return `<svg width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
+  return `<svg class="wx-anim-icon wx-is-clear" width="${size}" height="${size}" viewBox="0 0 32 32" fill="none" aria-hidden="true">
     ${
       isDay
-        ? `<circle cx="16" cy="16" r="6.5" fill="#FBBF24"/>
-           <path d="M16 4v3M16 25v3M4 16h3M25 16h3M7.5 7.5l2.2 2.2M22.3 22.3l2.2 2.2M24.5 7.5l-2.2 2.2M9.7 22.3l-2.2 2.2" stroke="#FBBF24" stroke-width="2" stroke-linecap="round"/>`
-        : `<path d="M19.5 7.2a8.5 8.5 0 1 0 5.3 15.1A9.2 9.2 0 0 1 19.5 7.2Z" fill="#E2E8F0"/>`
+        ? `<g class="wx-sun-spin">
+             <circle cx="16" cy="16" r="6.5" fill="#FBBF24"/>
+             <path d="M16 4v3M16 25v3M4 16h3M25 16h3M7.5 7.5l2.2 2.2M22.3 22.3l2.2 2.2M24.5 7.5l-2.2 2.2M9.7 22.3l-2.2 2.2" stroke="#FBBF24" stroke-width="2" stroke-linecap="round"/>
+           </g>`
+        : `<path class="wx-moon-orb" d="M19.5 7.2a8.5 8.5 0 1 0 5.3 15.1A9.2 9.2 0 0 1 19.5 7.2Z" fill="#E2E8F0"/>`
     }
   </svg>`;
 }
@@ -1591,8 +1596,9 @@ initTheme();
 updateHistoryBadge();
 renderHomeDashboard();
 initGPS();
+
 // ==========================================
-// AIvolution Team 
+// AIvolution Team
 // ==========================================
 (function initBottomNavLiquidGlass() {
   if (!bottomNav) return;
