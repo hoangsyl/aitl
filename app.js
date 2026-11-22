@@ -860,7 +860,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
 
   const productBlock = sp && sp.hien_thi ? `
     <div class="info-block">
-      <h3>Dinh dưỡng & Nơi mua</h3>
+      <h3>🍽️Dinh dưỡng & Nơi mua</h3>
       <p><strong>Sức khỏe:</strong> ${escapeHtml(sp.tot_cho_suc_khoe || "Đang cập nhật")}</p>
       <p><strong>Chi tiết:</strong> ${escapeHtml(sp.chi_tiet_san_pham || "Đang cập nhật")}</p>
       <p><strong>Nơi mua gợi ý:</strong> ${escapeHtml(sp.noi_mua_goi_y || "Đà Nẵng – Hội An")}</p>
@@ -900,12 +900,12 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
     ${ringBlock}
 
     <div class="info-block">
-      <h3>Thông tin & Câu chuyện</h3>
+      <h3>📊Thông tin chi tiết</h3>
       <p>${escapeHtml(data.cau_chuyen_lich_su || "")}</p>
     </div>
 
     <div class="info-block">
-      <h3>Điểm độc đáo</h3>
+      <h3>✨Điểm độc đáo</h3>
       <p>${escapeHtml(data.giai_thoai_dac_biet || "")}</p>
     </div>
 
@@ -913,7 +913,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
     ${hanVietBlock}
 
     <div class="info-block">
-      <h3>Đánh giá từ người địa phương</h3>
+      <h3>💬Đánh giá từ người địa phương</h3>
       <p>${escapeHtml(data.danh_gia_ban_dia?.tom_tat || "")}</p>
       ${reviewsHtml}
     </div>
