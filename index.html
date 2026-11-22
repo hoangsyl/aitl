@@ -51,22 +51,22 @@
       </div>
 
       <!-- Hero Card màu #DDEFB5 -->
-      <section class="hero-card" aria-label="Tổng quan hôm nay">
+      <section class="hero-card" aria-label="Tổng số lượt đã quét">
         <div class="hero-info">
-          <span class="hero-label">Tổng Calo đã quét</span>
+          <span class="hero-label">Tổng số lượt đã quét</span>
           <div class="hero-value-row">
-            <span id="totalCaloriesVal" class="hero-number tabular-nums">0</span>
-            <span class="hero-unit">kcal</span>
+            <span id="totalScansVal" class="hero-number tabular-nums">0</span>
+            <span class="hero-unit">lượt</span>
           </div>
-          <span id="totalScansSub" class="hero-sub tabular-nums">0 mục đã nhận diện</span>
+          <span id="totalScansSub" class="hero-sub tabular-nums">Đã lưu 0/30 mục</span>
         </div>
         <div class="hero-ring-wrap" aria-hidden="true">
           <svg class="ring-svg" viewBox="0 0 88 88">
             <circle class="ring-track" cx="44" cy="44" r="36" />
-            <circle id="heroRingProgress" class="ring-fill" cx="44" cy="44" r="36" stroke-dasharray="226.2" stroke-dashoffset="170" />
+            <circle id="heroRingProgress" class="ring-fill" cx="44" cy="44" r="36" stroke-dasharray="226.2" stroke-dashoffset="208" />
           </svg>
           <div class="ring-center-icon">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="#F97316" aria-hidden="true"><path d="M12 2c.7 3.2 4 5.5 4 9.5a4 4 0 1 1-8 0c0-1.6.6-3.1 1.5-4.3-.1 1.4.7 2.4 1.5 2.8-.4-2.4.2-5.4 1-8Z"/></svg>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#030303" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/></svg>
           </div>
         </div>
       </section>
@@ -238,7 +238,7 @@
     <!-- ==================== ALERT DIALOG XÓA LỊCH SỬ ==================== -->
     <dialog id="confirmDialog" class="alert-dialog" aria-labelledby="dialogTitle" aria-describedby="dialogDesc">
       <h2 id="dialogTitle" class="dialog-title">Xóa toàn bộ lịch sử?</h2>
-      <p id="dialogDesc" class="dialog-desc">Tất cả các mục đã quét và thống kê calo hôm nay sẽ bị xóa khỏi thiết bị này.</p>
+      <p id="dialogDesc" class="dialog-desc">Tất cả các mục đã quét và lịch sử khám phá sẽ bị xóa khỏi thiết bị này.</p>
       <div class="dialog-actions">
         <button type="button" id="dialogCancelBtn" class="btn-pill btn-secondary">Hủy</button>
         <button type="button" id="dialogConfirmBtn" class="btn-pill btn-danger">Xóa tất cả</button>
@@ -246,6 +246,6 @@
     </dialog>
   </div>
 
-  <script src="app.js?v=14"></script>
+  <script src="app.js?v=15"></script>
 </body>
 </html>
