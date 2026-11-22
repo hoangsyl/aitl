@@ -7,17 +7,14 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (GROQ CHÍNH – NHANH & ỔN ĐỊNH)
+// 1. CẤU HÌNH HỆ THỐNG (TỰ DÒ MODEL GROQ ĐANG SỐNG)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GROQ_VISION_PRIORITY: [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct"
-  ],
+  GROQ_VISION_PRIORITY: [],
   GEMINI_BACKUP_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
   GROQ_ATTEMPT_TIMEOUT_MS: 5500,
-  GROQ_MODELS_TIMEOUT_MS: 1500,
+  GROQ_MODELS_TIMEOUT_MS: 2000,
   SERPER_TIMEOUT_MS: 1100,
   GEMINI_BACKUP_TIMEOUT_MS: 5500,
   CHAT_TIMEOUT_MS: 4500,
@@ -311,7 +308,7 @@ QUY TẮC BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1: GROQ LPU (GỌI THẲNG SCOUT – KHÔNG LỖI 400)
+// 5. TẦNG 1: GROQ LPU (TỰ DÒ DANH SÁCH MODEL VISION SỐNG)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -349,8 +346,7 @@ function getOrderedGroqVisionModels(liveModels = []) {
   const textOnly = /gpt-oss|deepseek|mixtral|llama-3\.1|llama-3\.3|llama3-|allam|gemma2/i;
   const visionPriority = /vision|vl|scout|maverick|llama-4|llama-5|omni|multimodal|pixtral|kimi|qwen/i;
 
-  const merged = [...new Set([...CONFIG.GROQ_VISION_PRIORITY, ...liveModels])];
-  const filtered = merged.filter(
+  const filtered = [...new Set(liveModels)].filter(
     (m) => !textOnly.test(m) && !runtimeState.badGroqVisionModels.has(m)
   );
   const primary = filtered.filter((m) => visionPriority.test(m));
@@ -416,9 +412,22 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
 
 async function runGroqVision({ apiKeys, prompt, imageBase64 }) {
   const errors = [];
-  const models = getOrderedGroqVisionModels(runtimeState.cachedGroqModels || []).slice(0, 2);
 
   for (const apiKey of apiKeys) {
+    let liveModels = [];
+    try {
+      liveModels = await fetchWorkingGroqModels(apiKey);
+    } catch (e) {
+      errors.push(`GroqModels: ${e.message}`);
+      continue;
+    }
+
+    const models = getOrderedGroqVisionModels(liveModels).slice(0, 3);
+    if (!models.length) {
+      errors.push(`Groq không có model vision trong [${liveModels.slice(0, 4).join(", ")}]`);
+      continue;
+    }
+
     for (const model of models) {
       try {
         const result = await callGroqVision({
@@ -1065,7 +1074,11 @@ module.exports = async (req, res) => {
 
     if (!visionOutput) {
       if (geminiKeys.length) {
-        visionOutput = await runGeminiBackupVision({ apiKeys: geminiKeys, prompt, imageBase64 });
+        try {
+          visionOutput = await runGeminiBackupVision({ apiKeys: geminiKeys, prompt, imageBase64 });
+        } catch (gemErr) {
+          throw new Error(`Groq: ${groqError?.message || "N/A"} || Gemini: ${gemErr.message}`);
+        }
       } else if (groqError) {
         throw groqError;
       }
