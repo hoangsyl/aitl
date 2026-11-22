@@ -1564,7 +1564,7 @@ document.getElementById("switchBtn").addEventListener("click", () => {
 });
 
 function prepareScanImage(source, srcW, srcH) {
-  const maxSide = 1024;
+  const maxSide = 768;
   const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
   canvas.width = Math.round(srcW * scale);
   canvas.height = Math.round(srcH * scale);
@@ -1575,7 +1575,7 @@ function prepareScanImage(source, srcW, srcH) {
   ctx2d.drawImage(source, 0, 0, canvas.width, canvas.height);
 
   return {
-    base64: canvas.toDataURL("image/jpeg", 0.82).split(",")[1],
+    base64: canvas.toDataURL("image/jpeg", 0.74).split(",")[1],
     thumb: makeThumbnail(canvas)
   };
 }
