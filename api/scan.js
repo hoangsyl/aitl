@@ -970,6 +970,73 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
+// 7.5 TỰ ĐỘNG TRA GIÁ THẬT TRÊN GOOGLE (SERPER API)
+// ==========================================
+async function fetchRealPriceFromGoogle(productName) {
+  const apiKey = process.env.SERPER_API_KEY;
+  if (!apiKey || !productName) return null;
+
+  try {
+    const res = await fetchWithTimeout(
+      "https://google.serper.dev/search",
+      {
+        method: "POST",
+        headers: {
+          "X-API-KEY": apiKey,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          q: `giá ${productName} chính hãng`,
+          gl: "vn",
+          hl: "vi",
+          num: 6
+        })
+      },
+      2000
+    );
+
+    if (!res.ok) return null;
+    const data = await res.json();
+
+    const texts = [];
+    if (data.answerBox?.snippet) texts.push(data.answerBox.snippet);
+    (data.organic || []).forEach((item) => {
+      if (item.price) texts.push(String(item.price));
+      if (item.title) texts.push(item.title);
+      if (item.snippet) texts.push(item.snippet);
+    });
+
+    const fullText = texts.join(" | ");
+    const prices = [];
+
+    const regexVnd = /(?:₫\s*)?(\d{1,3}(?:[.,]\d{3})+)\s*(?:đ|₫|vnđ|vnd)?/gi;
+    let match;
+    while ((match = regexVnd.exec(fullText)) !== null) {
+      const val = Number(match[1].replace(/[.,]/g, ""));
+      if (val >= 5000 && val <= 100000000) prices.push(val);
+    }
+
+    const regexK = /\b(\d{2,4})k\b/gi;
+    while ((match = regexK.exec(fullText)) !== null) {
+      const val = Number(match[1]) * 1000;
+      if (val >= 5000 && val <= 50000000) prices.push(val);
+    }
+
+    if (!prices.length) return null;
+
+    prices.sort((a, b) => a - b);
+    const trimmed = prices.length >= 4 ? prices.slice(1, -1) : prices;
+    const minP = trimmed[0];
+    const maxP = trimmed[trimmed.length - 1];
+
+    const fmt = (n) => n.toLocaleString("vi-VN");
+    return minP === maxP ? `${fmt(minP)} VNĐ` : `${fmt(minP)} - ${fmt(maxP)} VNĐ`;
+  } catch (_) {
+    return null;
+  }
+}
+
+// ==========================================
 // 8. ENTRY POINT SERVERLESS HANDLER (GROQ CHÍNH -> GEMINI DỰ PHÒNG)
 // ==========================================
 module.exports = async (req, res) => {
@@ -1030,7 +1097,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. CHẾ ĐỘ QUÉT ẢNH (Groq chính -> Gemini dự phòng) ---
+    // --- 3. CHẾ ĐỘ QUÉT ẢNH (Groq chính -> Gemini dự phòng -> Tra giá Google) ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1067,6 +1134,14 @@ module.exports = async (req, res) => {
 
     if (finalPayload.error) {
       return res.status(422).json(finalPayload);
+    }
+
+    // Nếu là sản phẩm / đồ uống / vật thể -> tự động tra giá thật trên Google
+    if (!finalPayload.la_dia_diem && finalPayload.ten_dia_diem) {
+      const realPrice = await fetchRealPriceFromGoogle(finalPayload.ten_dia_diem);
+      if (realPrice) {
+        finalPayload.nien_dai_hoac_gia = realPrice;
+      }
     }
 
     return res.status(200).json(finalPayload);
