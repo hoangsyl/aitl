@@ -1391,7 +1391,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
   const sp = data.thong_tin_san_pham;
   const kcalNum = parseCalories(sp?.calo_uoc_tinh);
   const highlightText = sp?.hien_thi && sp.calo_uoc_tinh
-    ? `Ước tính: ${sp.calo_uoc_tinh}`
+    ? `🔥Ước tính calo: ${sp.calo_uoc_tinh}`
     : (data.dia_chi || "Đà Nẵng – Hội An");
 
   const providerBadge = data._provider
