@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG 
+// 1. CẤU HÌNH HỆ THỐNG (GROQ LÀM CHÍNH – SIÊU NHANH 2–4s)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -184,7 +184,13 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
     ? data.danh_gia_ban_dia
     : {};
 
-  const ten = String(data.ten_dia_diem || "Chưa xác định rõ").trim();
+  // Chặn triệt để trường hợp AI điền "Không áp dụng" vào tên sản phẩm/đối tượng
+  let ten = String(data.ten_dia_diem || "").trim();
+  if (!ten || /^(không áp dụng|chưa xác định|n\/a|none|null)$/i.test(ten)) {
+    const chiTiet = String(sp.chi_tiet_san_pham || data.cau_chuyen_lich_su || "").trim();
+    ten = chiTiet ? chiTiet.split(/[.,(]/)[0].trim().slice(0, 60) : `Đối tượng ${loai}`;
+  }
+
   const diaChi = String(data.dia_chi || (isPlace ? "Đà Nẵng – Hội An" : "Không áp dụng")).trim();
   const nienDaiGia = String(data.nien_dai_hoac_gia || "Tùy thương hiệu & nơi bán").trim();
 
@@ -284,23 +290,14 @@ NGUYÊN TẮC TRUNG THỰC TUYỆT ĐỐI (BẮT BUỘC):
 5. HÁN – NÔM: Chỉ bật "co_han_viet": true khi ảnh thực sự có chữ Hán/Nôm rõ nét.
 6. Chỉ trả "khong_nhan_dien_duoc": true khi ảnh tối đen hoặc nhòe hoàn toàn.
 7. VIẾT SÚC TÍCH (2–3 câu mỗi mục) và CHỈ TRẢ VỀ JSON HỢP LỆ:
-8. CHUẨN XÁC GIÁ TIỀN & CALO 99% (TUYỆT ĐỐI KHÔNG BỊA):
-   - ĐỌC KỸ BAO BÌ / NHÃN MÁC TRƯỚC: Nếu ảnh chụp thực phẩm đóng gói, nước uống, đồ dùng có in bảng Nutrition Facts (kcal/100ml hoặc kcal/gói), dung tích (ml/g), hoặc tem giá/bảng giá: BẮT BUỘC đọc đúng con số in trên bao bì và nhân theo đúng khối lượng/dung tích thực tế.
-   - TÍNH CALO MÓN ĂN CHẾ BIẾN THEO ĐỊNH LƯỢNG CHUẨN VIỆN DINH DƯỠNG:
-     + Cộng từng nguyên liệu nhìn thấy trong tô/đĩa (VD: 150g sợi mì/bún ~170-200 kcal + 60g thịt/tôm ~100-130 kcal + nước dùng/dầu mỡ/topping ~100-150 kcal).
-     + Chỉ xuất khoảng dao động hẹp thực tế (sai số tối đa 50-80 kcal, VD: "420 - 480 kcal", "140 - 160 kcal/lon 330ml").
-     + Với đồ vật KHÔNG ăn/uống được (bình nước, điện thoại, bàn phím, quần áo...): BẮT BUỘC ghi chính xác "Không áp dụng".
-   - TÍNH GIÁ TIỀN THAM KHẢO SÁT THỊ TRƯỜNG VIỆT NAM (VNĐ):
-     + Nếu thấy bảng giá/tem giá trong ảnh: ghi đúng giá trên ảnh.
-     + Nếu là hàng tiêu dùng/đồ uống/món ăn phổ thông tại Việt Nam (đặc biệt khu vực Đà Nẵng – Hội An): đối chiếu đúng dung tích, chất liệu, phân khúc bình dân hay thương hiệu để đưa khoảng giá bán lẻ thực tế sát nhất (VD: nước ngọt lon 10.000 - 15.000 VNĐ; tô mì Quảng/cao lầu bình dân 30.000 - 50.000 VNĐ; bình lắc nhựa PP 500-700ml phổ thông 45.000 - 95.000 VNĐ).
-     + Nếu là đồ vật đặc thù/không thể định giá chính xác từ ảnh (đồ tự chế, linh kiện lẻ, tài liệu): ghi rõ "Tùy thương hiệu & nơi bán", KHÔNG tự bịa số tiền ảo.
+
 {
   "khong_nhan_dien_duoc": false,
   "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": false,
-  "ten_dia_diem": "Tên chính xác, trung thực",
+  "ten_dia_diem": "BẮT BUỘC ghi tên gọi cụ thể của sản phẩm, món ăn, vật thể hoặc địa điểm (VD: 'Xịt dưỡng tóc Akuma Hair Spray Tonic', 'Mì Quảng gà'). TUYỆT ĐỐI KHÔNG ghi 'Không áp dụng' ở trường này.",
   "dia_chi": "Địa chỉ thật nếu là địa điểm xác định được, ngược lại ghi 'Không áp dụng'",
-  "nien_dai_hoac_gia": "Ghi đúng giá trên tem (nếu có) hoặc khoảng giá bán lẻ thực tế tại Việt Nam bằng VNĐ (VD: 35.000 - 50.000 VNĐ); nếu không thể định giá từ ảnh ghi 'Tùy thương hiệu & nơi bán'",
+  "nien_dai_hoac_gia": "Giá trên tem hoặc khoảng giá bán lẻ thực tế tại Việt Nam bằng VNĐ (VD: 35.000 - 50.000 VNĐ); nếu không thể định giá ghi 'Tùy thương hiệu & nơi bán'.",
   "cau_chuyen_lich_su": "2-3 câu chính xác về bản chất, công dụng hoặc nguồn gốc xác thực.",
   "giai_thoai_dac_biet": "2-3 câu mô tả đúng chi tiết thực tế thấy trong ảnh (màu sắc, hình dáng, chất liệu).",
   "thong_tin_san_pham": {
@@ -433,7 +430,6 @@ async function runGroqVision({ apiKeys, prompt, imageBase64 }) {
   const errors = [];
 
   for (const apiKey of apiKeys) {
-    // 1. Bắn song song 2 model vision nhanh nhất (hoặc model đã chạy tốt + model kế tiếp) không cần đợi lấy list
     let fastCandidates = getOrderedGroqVisionModels(runtimeState.cachedGroqModels || []).slice(0, 2);
 
     if (fastCandidates.length) {
@@ -476,12 +472,11 @@ async function runGroqVision({ apiKeys, prompt, imageBase64 }) {
         const list = Array.isArray(aggErr?.errors) ? aggErr.errors : [aggErr];
         errors.push(...list.map((e) => e?.message || "Groq fast race failed"));
         if (list.some((e) => e?.status === 429 || e?.status === 401 || e?.status === 403)) {
-          continue; // Đổi ngay sang key Groq tiếp theo
+          continue;
         }
       }
     }
 
-    // 2. Nếu 2 model mặc định chưa khớp tên trên tài khoản Groq, tự dò danh sách model sống
     try {
       const liveModels = await fetchWorkingGroqModels(apiKey);
       const fallbackCandidates = getOrderedGroqVisionModels(liveModels)
