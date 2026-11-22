@@ -71,34 +71,43 @@ function extractJson(rawText) {
     .replace(/<think>[\s\S]*?<\/think>/gi, "")
     .replace(/```json|```/gi, "")
     .trim();
+
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
-  if (start === -1 || end === -1) {
-    throw new Error("Invalid JSON");
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error("Không tìm thấy JSON trong phản hồi AI");
   }
-  return JSON.parse(cleaned.slice(start, end + 1));
+
+  let jsonStr = cleaned.slice(start, end + 1);
+  try {
+    return JSON.parse(jsonStr);
+  } catch (_) {
+    // Sửa lỗi xuống dòng thô hoặc dấu phẩy thừa nếu AI viết lệch chuẩn nhẹ
+    jsonStr = jsonStr
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/[\u0000-\u0019]+/g, " ");
+    return JSON.parse(jsonStr);
+  }
 }
 
 async function fetchWorkingGroqModels(apiKey) {
   const res = await fetch("https://api.groq.com/openai/v1/models", {
     headers: { Authorization: `Bearer ${apiKey}` }
   });
-  if (!res.ok) throw new Error("Groq models error");
+  if (!res.ok) throw new Error(`Groq models HTTP ${res.status}`);
   const data = await res.json();
   const allIds = (data.data || []).map((m) => m.id).filter(Boolean);
-  const activeModels = allIds.filter(
+  return allIds.filter(
     (id) => !/whisper|tts|guard|safeguard|embed|prompt-guard/i.test(id)
   );
-  if (!activeModels.length) throw new Error("No Groq models");
-  return activeModels;
 }
 
-async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 8500 }) {
+async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 8000 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const imageUrl = imageBase64.startsWith("data:image")
+    const imageUrl = String(imageBase64).startsWith("data:image")
       ? imageBase64
       : `data:image/jpeg;base64,${imageBase64}`;
 
@@ -110,17 +119,14 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       },
       body: JSON.stringify({
         model,
-        temperature: 0.3,
+        temperature: 0.25,
         max_tokens: 900,
         messages: [
           {
             role: "user",
             content: [
               { type: "text", text: prompt },
-              {
-                type: "image_url",
-                image_url: { url: imageUrl }
-              }
+              { type: "image_url", image_url: { url: imageUrl } }
             ]
           }
         ]
@@ -129,11 +135,13 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
     });
 
     const rawText = await res.text();
-    if (!res.ok) throw new Error(`${model}: HTTP ${res.status}`);
+    if (!res.ok) {
+      throw new Error(`${model}: HTTP ${res.status}`);
+    }
 
     const parsed = JSON.parse(rawText.trim());
     const content = parsed.choices?.[0]?.message?.content;
-    if (!content) throw new Error("Empty content");
+    if (!content) throw new Error(`${model}: Empty content`);
     return extractJson(content);
   } finally {
     clearTimeout(timer);
@@ -141,59 +149,57 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
 }
 
 async function runVisionWithFallback({ apiKey, prompt, imageBase64 }) {
-  const fallbackList = [
+  const preferredVision = [
     "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
-    "llama-3.2-90b-vision-preview",
-    "llama-3.2-11b-vision-preview"
+    "meta-llama/llama-4-maverick-17b-128e-instruct"
   ];
 
-  let candidates = [...fallbackList];
+  let candidates = [...preferredVision];
   try {
     const allModels = await fetchWorkingGroqModels(apiKey);
-    const visionFromApi = allModels.filter((m) =>
-      /vision|scout|maverick|llama-4|vl|omni/i.test(m)
+    const dynamicVision = allModels.filter(
+      (m) => /llama-4|scout|maverick|vision|vl/i.test(m) && !candidates.includes(m)
     );
-    if (visionFromApi.length > 0) {
-      candidates = [...new Set([...visionFromApi, ...fallbackList])];
-    }
+    candidates = [...candidates, ...dynamicVision];
   } catch (_) {}
 
-  // Chạy song song 2 model đầu tiên để phản hồi nhanh nhất
+  const errors = [];
+
+  // Chạy song song 2 model Vision mạnh nhất để nhận diện nhanh 2-3 giây
   const firstBatch = candidates.slice(0, 2);
-  const firstResults = await Promise.allSettled(
+  const settled = await Promise.allSettled(
     firstBatch.map((model) =>
-      callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 8500 })
+      callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 8000 })
     )
   );
-  for (const r of firstResults) {
-    if (r.status === "fulfilled" && r.value && typeof r.value === "object") {
-      return r.value;
+
+  for (const item of settled) {
+    if (item.status === "fulfilled" && item.value && typeof item.value === "object") {
+      return item.value;
+    }
+    if (item.status === "rejected") {
+      errors.push(item.reason?.message || "Vision failed");
     }
   }
 
-  // Nếu batch đầu chưa được, thử lần lượt các model còn lại
-  for (const model of candidates.slice(2)) {
+  // Thử tiếp các model Vision khác nếu có
+  for (const model of candidates.slice(2, 4)) {
     try {
-      const res = await callGroqVision({
-        apiKey,
-        model,
-        prompt,
-        imageBase64,
-        timeoutMs: 8500
-      });
+      const res = await callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 7500 });
       if (res && typeof res === "object") return res;
-    } catch (_) {}
+    } catch (err) {
+      errors.push(err.message || "Vision failed");
+    }
   }
 
-  throw new Error("All vision models failed");
+  throw new Error(errors.join(" | ") || "Không gọi được model Vision");
 }
 
 async function handleChatMode({ apiKey, messages, locationContext }) {
   const models = await fetchWorkingGroqModels(apiKey);
   const sortedModels = [
-    ...models.filter((m) => /llama-3\.3|llama-3\.1|gpt-oss|qwen/i.test(m)),
-    ...models.filter((m) => !/llama-3\.3|llama-3\.1|gpt-oss|qwen/i.test(m))
+    ...models.filter((m) => /llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m)),
+    ...models.filter((m) => !/llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m))
   ];
 
   const systemPrompt = `Bạn là trợ lý AIvolution thông minh, thân thiện và am hiểu sâu sắc khu vực Đà Nẵng – Hội An.
@@ -230,8 +236,17 @@ Hãy trả lời ngắn gọn, rõ ràng, thực tế bằng tiếng Việt.`;
 }
 
 // ==========================================
-// GIỌNG HOÀI MY NEURAL TÍCH HỢP SẴN (KHÔNG CẦN PACKAGE.JSON)
+// GIỌNG ĐỌC MP3 TÍCH HỢP SẴN (HOÀI MY NEURAL + DỰ PHÒNG MP3 TỰ ĐỘNG)
 // ==========================================
+function cleanTtsText(rawText) {
+  return String(rawText || "")
+    .replace(/[*#_•~`]/g, " ")
+    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 1200);
+}
+
 function escapeXml(str) {
   return String(str || "")
     .replace(/&/g, "&amp;")
@@ -281,16 +296,7 @@ function createWsFrame(payload, opcode = 0x1) {
   return Buffer.concat([header, mask, masked]);
 }
 
-function generateHoaiMyBase64(rawText) {
-  const cleanText = String(rawText || "")
-    .replace(/[*#_•~`]/g, " ")
-    .replace(/[\u{1F300}-\u{1FAFF}]/gu, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 1200);
-
-  if (!cleanText) return Promise.resolve(null);
-
+function generateHoaiMyBase64(cleanText) {
   return new Promise((resolve, reject) => {
     const trustedToken = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
     const connId = crypto.randomBytes(16).toString("hex");
@@ -302,7 +308,7 @@ function generateHoaiMyBase64(rawText) {
       `/consumer/speech/synthesize/readaloud/edge/v1` +
       `?TrustedClientToken=${trustedToken}` +
       `&Sec-MS-GEC=${secMsGec}` +
-      `&Sec-MS-GEC-Version=1-130.0.2849.68` +
+      `&Sec-MS-GEC-Version=1-143.0.3650.66` +
       `&ConnectionId=${connId}`;
 
     const socket = tls.connect(443, "speech.platform.bing.com", {
@@ -312,15 +318,12 @@ function generateHoaiMyBase64(rawText) {
     let done = false;
     let upgraded = false;
     let recvBuf = Buffer.alloc(0);
+    let lastOpcode = 0x1;
     const audioChunks = [];
 
     const timer = setTimeout(() => {
-      if (!done) {
-        done = true;
-        socket.destroy();
-        reject(new Error("TTS timeout"));
-      }
-    }, 9500);
+      finish(new Error("HoaiMy timeout"));
+    }, 4500);
 
     function finish(err, result) {
       if (done) return;
@@ -340,7 +343,7 @@ function generateHoaiMyBase64(rawText) {
         `Sec-WebSocket-Key: ${wsKey}`,
         "Sec-WebSocket-Version: 13",
         "Origin: chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
-        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
+        "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0",
         "Pragma: no-cache",
         "Cache-Control: no-cache",
         "\r\n"
@@ -357,7 +360,7 @@ function generateHoaiMyBase64(rawText) {
 
         const headerText = recvBuf.slice(0, headerEnd).toString("utf8");
         if (!headerText.includes("101")) {
-          return finish(new Error("Handshake failed"));
+          return finish(new Error("Edge TTS blocked"));
         }
 
         upgraded = true;
@@ -385,7 +388,10 @@ function generateHoaiMyBase64(rawText) {
       }
 
       while (recvBuf.length >= 2) {
-        const opcode = recvBuf[0] & 0x0f;
+        const rawOpcode = recvBuf[0] & 0x0f;
+        const opcode = rawOpcode === 0x0 ? lastOpcode : rawOpcode;
+        if (rawOpcode === 0x1 || rawOpcode === 0x2) lastOpcode = rawOpcode;
+
         const masked = (recvBuf[1] & 0x80) !== 0;
         let payloadLen = recvBuf[1] & 0x7f;
         let offset = 2;
@@ -415,18 +421,22 @@ function generateHoaiMyBase64(rawText) {
             return finish(new Error("Empty audio"));
           }
         } else if (opcode === 0x2 && payload.length > 2) {
-          const headerLen = payload.readUInt16BE(0);
-          const headerStr = payload.slice(2, 2 + headerLen).toString("utf8");
-          if (headerStr.includes("Path:audio")) {
-            audioChunks.push(payload.slice(2 + headerLen));
+          if (rawOpcode === 0x2) {
+            const headerLen = payload.readUInt16BE(0);
+            const headerStr = payload.slice(2, 2 + headerLen).toString("utf8");
+            if (headerStr.includes("Path:audio")) {
+              audioChunks.push(payload.slice(2 + headerLen));
+            }
+          } else {
+            audioChunks.push(payload);
           }
-        } else if (opcode === 0x9) {
+        } else if (rawOpcode === 0x9) {
           socket.write(createWsFrame(payload, 0xa));
-        } else if (opcode === 0x8) {
+        } else if (rawOpcode === 0x8) {
           if (audioChunks.length > 0) {
             return finish(null, Buffer.concat(audioChunks).toString("base64"));
           }
-          return finish(new Error("Connection closed"));
+          return finish(new Error("Closed"));
         }
       }
     });
@@ -444,24 +454,91 @@ function generateHoaiMyBase64(rawText) {
   });
 }
 
+function splitTextForMp3(text, maxLen = 175) {
+  const sentences = text.match(/[^.!?]+[.!?]*/g) || [text];
+  const chunks = [];
+  let current = "";
+
+  for (const s of sentences) {
+    const part = s.trim();
+    if (!part) continue;
+    if ((current + " " + part).trim().length <= maxLen) {
+      current = (current + " " + part).trim();
+    } else {
+      if (current) chunks.push(current);
+      if (part.length <= maxLen) {
+        current = part;
+      } else {
+        const words = part.split(/\s+/);
+        let temp = "";
+        for (const w of words) {
+          if ((temp + " " + w).trim().length <= maxLen) {
+            temp = (temp + " " + w).trim();
+          } else {
+            if (temp) chunks.push(temp);
+            temp = w;
+          }
+        }
+        current = temp;
+      }
+    }
+  }
+  if (current) chunks.push(current);
+  return chunks.slice(0, 8);
+}
+
+async function generateBackupMp3Base64(cleanText) {
+  const chunks = splitTextForMp3(cleanText, 175);
+  const buffers = await Promise.all(
+    chunks.map(async (chunk) => {
+      const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=vi&q=${encodeURIComponent(chunk)}`;
+      const res = await fetch(url, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+      });
+      if (!res.ok) throw new Error(`Backup TTS HTTP ${res.status}`);
+      return Buffer.from(await res.arrayBuffer());
+    })
+  );
+  return Buffer.concat(buffers).toString("base64");
+}
+
+async function generateVoiceBase64(rawText) {
+  const cleanText = cleanTtsText(rawText);
+  if (!cleanText) return null;
+
+  // Ưu tiên 1: Giọng Hoài My Neural
+  try {
+    const hoaiMy = await generateHoaiMyBase64(cleanText);
+    if (hoaiMy) return hoaiMy;
+  } catch (_) {}
+
+  // Ưu tiên 2: Luồng MP3 dự phòng nếu Microsoft chặn IP Vercel -> đảm bảo 100% luôn phát được
+  return await generateBackupMp3Base64(cleanText);
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
 
+  if (req.method === "OPTIONS") {
+    return res.status(200).end();
+  }
   if (req.method !== "POST") {
     return res.status(405).json({ error: FRIENDLY_ERROR });
   }
 
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
 
-    // --- CHẾ ĐỘ ĐỌC GIỌNG HOÀI MY NEURAL (TÍCH HỢP SẴN) ---
-    if (body && body.mode === "tts") {
+    // --- CHẾ ĐỘ ĐỌC GIỌNG THUYẾT MINH ---
+    if (body.mode === "tts") {
       try {
-        const audioBase64 = await generateHoaiMyBase64(body.text);
+        const audioBase64 = await generateVoiceBase64(body.text);
         if (audioBase64) {
           return res.status(200).json({ audioBase64 });
         }
-        return res.status(502).json({ ttsError: "Không tạo được âm thanh" });
+        return res.status(502).json({ ttsError: "Không có dữ liệu âm thanh" });
       } catch (err) {
         return res.status(502).json({ ttsError: err.message || "Lỗi tạo giọng" });
       }
@@ -469,11 +546,14 @@ module.exports = async (req, res) => {
 
     const groqKey = String(process.env.GROQ_API_KEY || "").trim();
     if (!groqKey) {
-      return res.status(400).json({ error: FRIENDLY_ERROR });
+      return res.status(400).json({
+        error: FRIENDLY_ERROR,
+        debug: "Thiếu biến GROQ_API_KEY trên Vercel"
+      });
     }
 
     // --- CHẾ ĐỘ CHATBOT ---
-    if (body && body.mode === "chat") {
+    if (body.mode === "chat") {
       const reply = await handleChatMode({
         apiKey: groqKey,
         messages: body.messages,
@@ -483,9 +563,9 @@ module.exports = async (req, res) => {
     }
 
     // --- CHẾ ĐỘ QUÉT ẢNH ---
-    const { imageBase64, locationContext, lat, lng } = body || {};
+    const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
-      return res.status(400).json({ error: FRIENDLY_ERROR });
+      return res.status(400).json({ error: FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
     }
 
     const areaPoint = clampToDaNangHoiAn(lat, lng, locationContext);
@@ -493,7 +573,7 @@ module.exports = async (req, res) => {
     const prompt = `Bạn là chuyên gia văn hóa Đà Nẵng – Hội An, đồng thời là chuyên gia dinh dưỡng & phân tích sản phẩm.
 Ngữ cảnh vị trí (chỉ trong Đà Nẵng – Hội An): ${locationContext || "Đà Nẵng – Hội An"}.
 
-Nhiệm vụ: Nhận diện chính xác đối tượng trong ảnh và phân loại đúng 1 trong 2 nhóm:
+Nhiệm vụ: Nhận diện chính xác đối tượng chính trong ảnh và phân loại đúng 1 trong 2 nhóm:
 - NHÓM ĐỊA ĐIỂM: "Di tích" | "Nhà hàng & Quán ăn" | "Shop & Workshop" | "Hán Nôm"
 - NHÓM VẬT PHẨM / THỨC ĂN: "Thức ăn & Đồ uống" | "Sản phẩm" | "Vật thể"
 
@@ -511,7 +591,7 @@ Yêu cầu nội dung (viết văn phong hướng dẫn viên du lịch truyền
 4. "danh_gia_ban_dia": Tổng hợp nhận xét chân thực theo phong cách Local Guide Đà Nẵng – Hội An.
 5. "han_viet": CHỈ đặt "co_han_viet": true nếu ảnh THẬT SỰ CÓ CHỮ HÁN/NÔM.
 
-CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không kèm chữ giải thích bên ngoài) theo mẫu:
+CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không viết thêm chữ nào bên ngoài ngoặc nhọn) theo mẫu:
 {
   "loai_doi_tuong": "Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": true,
@@ -587,7 +667,10 @@ CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không kèm chữ giải thích bên n
     }
 
     return res.status(200).json(result);
-  } catch (_) {
-    return res.status(502).json({ error: FRIENDLY_ERROR });
+  } catch (err) {
+    return res.status(502).json({
+      error: FRIENDLY_ERROR,
+      debug: err?.message || "Lỗi xử lý máy chủ"
+    });
   }
 };
