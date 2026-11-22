@@ -19,7 +19,7 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
 
-// Xác nhận xóa lịch sử 2 chạm (không dùng confirm() làm đơ camera trên iPhone)
+// Xác nhận xóa lịch sử 2 chạm (không dùng confirm() gây đơ camera iPhone)
 let confirmClearArmed = false;
 let confirmClearTimer = null;
 
@@ -50,7 +50,7 @@ function loadHistory() {
   try {
     const raw = localStorage.getItem(HISTORY_KEY);
     return raw ? JSON.parse(raw) : [];
-  } catch (e) {
+  } catch (_) {
     return [];
   }
 }
@@ -58,7 +58,7 @@ function loadHistory() {
 function saveHistoryList(list) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
-  } catch (e) {
+  } catch (_) {
     const slim = list.map((item, idx) => (idx > 5 ? { ...item, thumb: "" } : item));
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(slim));
@@ -103,7 +103,7 @@ function makeThumbnail(sourceCanvas) {
     thumbCanvas.height = Math.round(sourceCanvas.height * scale);
     thumbCanvas.getContext("2d").drawImage(sourceCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
     return thumbCanvas.toDataURL("image/jpeg", 0.55);
-  } catch (e) {
+  } catch (_) {
     return "";
   }
 }
@@ -481,7 +481,7 @@ function prefetchTts(text) {
   getOrFetchTtsBuffer(cleanText).catch(() => {});
 }
 
-// Mở khóa loa iPhone ngay lập tức bằng 1 sample câm trong sự kiện chạm đầu tiên
+// Mở khóa loa iPhone ngay cú chạm đầu tiên
 function unlockAudioContext() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
@@ -661,10 +661,10 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
   const productBlock = sp && sp.hien_thi ? `
     <div class="ai-product-card">
       <h4>🥗 Dinh dưỡng & Thông tin mua hàng</h4>
-      <p><strong>🔥 Chỉ số Calo:</strong> ${sp.calo_uoc_tinh || "Đang cập nhật"}</p>
-      <p><strong>💚 Sức khỏe:</strong> ${sp.tot_cho_suc_khoe || "Đang cập nhật"}</p>
-      <p><strong>📦 Chi tiết:</strong> ${sp.chi_tiet_san_pham || "Đang cập nhật"}</p>
-      <p><strong>🛒 Nơi mua gợi ý:</strong> ${sp.noi_mua_goi_y || "Các cửa hàng uy tín tại Đà Nẵng – Hội An"}</p>
+      <p><strong>🔥 Chỉ số Calo:</strong> ${escapeHtml(sp.calo_uoc_tinh || "Đang cập nhật")}</p>
+      <p><strong>💚 Sức khỏe:</strong> ${escapeHtml(sp.tot_cho_suc_khoe || "Đang cập nhật")}</p>
+      <p><strong>📦 Chi tiết:</strong> ${escapeHtml(sp.chi_tiet_san_pham || "Đang cập nhật")}</p>
+      <p><strong>🛒 Nơi mua gợi ý:</strong> ${escapeHtml(sp.noi_mua_goi_y || "Các cửa hàng uy tín tại Đà Nẵng – Hội An")}</p>
     </div>
   ` : "";
 
@@ -672,8 +672,8 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
   const hanVietBlock = hv && hv.co_han_viet ? `
     <div class="card">
       <h3>🏮 Giải nghĩa Hán – Nôm</h3>
-      <p><strong>Chữ gốc:</strong> ${hv.chu_goc || ""} (${hv.phien_am || ""})</p>
-      <p>${hv.y_nghia_tong_the || ""}</p>
+      <p><strong>Chữ gốc:</strong> ${escapeHtml(hv.chu_goc || "")} (${escapeHtml(hv.phien_am || "")})</p>
+      <p>${escapeHtml(hv.y_nghia_tong_the || "")}</p>
     </div>
   ` : "";
 
@@ -682,7 +682,7 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
     : `<a class="ai-map-btn" href="${data.google_maps_url}" target="_blank" rel="noopener">🛒 Tìm địa chỉ mua vật phẩm này</a>`;
 
   const reviewsHtml = (data.danh_gia_ban_dia?.review_mau || [])
-    .map((r) => `<div class="review-item"><span class="tag-local">THỔ ĐỊA</span>${r}</div>`)
+    .map((r) => `<div class="review-item"><span class="tag-local">THỔ ĐỊA</span>${escapeHtml(r)}</div>`)
     .join("");
 
   const badgeRight = fromHistory
@@ -692,14 +692,14 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
   sheetContent.innerHTML = `
     <div class="sheet-header">
       <div class="badges">
-        <span class="badge-type">${data.loai_doi_tuong || "NHẬN DIỆN"}</span>
+        <span class="badge-type">${escapeHtml(data.loai_doi_tuong || "NHẬN DIỆN")}</span>
         ${badgeRight}
       </div>
       <button class="btn-close" onclick="closeSheet()">✕</button>
     </div>
 
-    <h2 class="title">${data.ten_dia_diem || "Kết quả nhận diện"}</h2>
-    <div class="meta">📍 ${data.dia_chi || "Đà Nẵng – Hội An"} • ${data.nien_dai_hoac_gia || ""} • ${fromHistory ? "🕒 " : "⚡ "}${timeOrElapsed}</div>
+    <h2 class="title">${escapeHtml(data.ten_dia_diem || "Kết quả nhận diện")}</h2>
+    <div class="meta">📍 ${escapeHtml(data.dia_chi || "Đà Nẵng – Hội An")} • ${escapeHtml(data.nien_dai_hoac_gia || "")} • ${fromHistory ? "🕒 " : "⚡ "}${timeOrElapsed}</div>
 
     <div class="action-row">
       <button id="speakBtn" class="btn-primary" onclick="speakText(currentSpeechText)">🔊 Nghe thuyết minh</button>
@@ -708,12 +708,12 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
 
     <div class="card">
       <h3>📜 Thông tin & Câu chuyện</h3>
-      <p>${data.cau_chuyen_lich_su || ""}</p>
+      <p>${escapeHtml(data.cau_chuyen_lich_su || "")}</p>
     </div>
 
     <div class="card">
       <h3>✨ Điểm độc đáo</h3>
-      <p>${data.giai_thoai_dac_biet || ""}</p>
+      <p>${escapeHtml(data.giai_thoai_dac_biet || "")}</p>
     </div>
 
     ${productBlock}
@@ -721,7 +721,7 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
 
     <div class="card">
       <h3>💬 Đánh giá từ người địa phương</h3>
-      <p>${data.danh_gia_ban_dia?.tom_tat || ""}</p>
+      <p>${escapeHtml(data.danh_gia_ban_dia?.tom_tat || "")}</p>
       ${reviewsHtml}
     </div>
   `;
