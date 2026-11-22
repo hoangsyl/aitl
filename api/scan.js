@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (TỰ DÒ MODEL GROQ ĐANG SỐNG)
+// 1. CẤU HÌNH HỆ THỐNG (GROQ CHÍNH – NHANH & THÔNG MINH)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -17,7 +17,7 @@ const CONFIG = {
   GROQ_MODELS_TIMEOUT_MS: 2000,
   SERPER_TIMEOUT_MS: 1100,
   GEMINI_BACKUP_TIMEOUT_MS: 5500,
-  CHAT_TIMEOUT_MS: 4500,
+  CHAT_TIMEOUT_MS: 5000,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 15 * 60 * 1000,
   KEY_COOLDOWN_429_MS: 60 * 1000,
@@ -264,7 +264,7 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 }
 
 // ==========================================
-// 4. PROMPT GỌN NHANH – CHUẨN XÁC – KHÔNG BỊA
+// 4. PROMPT QUÉT ẢNH CHUẨN XÁC – KHÔNG BỊA
 // ==========================================
 function buildVisionPrompt(locationContext) {
   return `Hệ thống nhận diện hình ảnh chính xác, trung thực cho AIvolution. Ngữ cảnh: ${locationContext || "Đà Nẵng – Hội An"}.
@@ -274,7 +274,7 @@ QUY TẮC BẮT BUỘC:
 2. Calo: chỉ tính cho món ăn/đồ uống theo bao bì hoặc định lượng thực tế (VD: "420 - 480 kcal"). Đồ vật không ăn được BẮT BUỘC ghi "Không áp dụng".
 3. Giá VNĐ: ghi đúng giá trên tem (nếu có) hoặc khoảng giá bán lẻ thực tế tại Việt Nam (VD: "35.000 - 50.000 VNĐ").
 4. Ẩm thực: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
-5. Viết ngắn gọn 3-4 câu nhưng chi tiết để mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ (không viết thêm bất kỳ chữ nào ngoài JSON):
+5. Viết ngắn gọn 1–2 câu mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ (không viết thêm bất kỳ chữ nào ngoài JSON):
 
 {
   "khong_nhan_dien_duoc": false,
@@ -308,7 +308,7 @@ QUY TẮC BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1: GROQ LPU (TỰ DÒ DANH SÁCH MODEL VISION SỐNG)
+// 5. TẦNG 1: GROQ LPU (VISION + TRỢ LÝ THÔNG MINH)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -467,10 +467,83 @@ async function runGroqVision({ apiKeys, prompt, imageBase64 }) {
   throw finalErr;
 }
 
-async function handleGroqChat({ apiKeys, messages, locationContext }) {
-  const systemPrompt = `Bạn là trợ lý AIvolution thông minh, trung thực và am hiểu Đà Nẵng – Hội An.
-Vị trí hiện tại của người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
-Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên quán hay địa chỉ nếu không chắc chắn.`;
+// ==========================================
+// 5.5 TRỢ LÝ AI THÔNG MINH (HIỂU MÓN VỪA QUÉT + TRA GOOGLE THỰC TẾ)
+// ==========================================
+async function searchWebContextForChat(userText, lastScan) {
+  const apiKeys = collectApiKeys("SERPER_API_KEY");
+  if (!apiKeys.length || !userText) return "";
+
+  const needSearch = /quán|ăn gì|ở đâu|giá|mấy giờ|đường|thời tiết|review|ngon|mua|địa chỉ|sự kiện|vé|chỗ nào/i.test(userText);
+  if (!needSearch) return "";
+
+  let query = userText.trim();
+  if (/món này|cái này|sản phẩm này|vừa quét/i.test(query) && lastScan?.ten_dia_diem) {
+    query = `giá mua ${lastScan.ten_dia_diem}`;
+  } else if (!/đà nẵng|hội an/i.test(query)) {
+    query = `${query} Đà Nẵng Hội An`;
+  }
+
+  for (const apiKey of apiKeys) {
+    try {
+      const res = await fetchWithTimeout(
+        "https://google.serper.dev/search",
+        {
+          method: "POST",
+          headers: {
+            "X-API-KEY": apiKey,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            q: query,
+            gl: "vn",
+            hl: "vi",
+            num: 3
+          })
+        },
+        CONFIG.SERPER_TIMEOUT_MS
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const snippets = (data.organic || [])
+        .map((item) => `- ${item.title}: ${item.snippet}`)
+        .join("\n");
+      return snippets ? `\n[Dữ liệu Google thực tế vừa tra cứu]:\n${snippets}` : "";
+    } catch (_) {
+      continue;
+    }
+  }
+  return "";
+}
+
+function buildSmartChatSystemPrompt({ locationContext, lastScan, webContext }) {
+  const vnTime = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+  const scanContext = lastScan && lastScan.ten_dia_diem
+    ? `\n[Đối tượng người dùng VỪA QUÉT bằng camera]:
+- Tên: ${lastScan.ten_dia_diem} (${lastScan.loai_doi_tuong || ""})
+- Giá/Niên đại: ${lastScan.nien_dai_hoac_gia || "Chưa rõ"}
+- Calo: ${lastScan.thong_tin_san_pham?.calo_uoc_tinh || "Không áp dụng"}
+- Chi tiết: ${lastScan.cau_chuyen_lich_su || ""}`
+    : "";
+
+  return `Bạn là Trợ lý thông minh của ứng dụng AIvolution tại Đà Nẵng – Hội An.
+Thời gian hiện tại: ${vnTime}. Vị trí người dùng: ${locationContext || "Đà Nẵng – Hội An"}.${scanContext}${webContext}
+
+NGUYÊN TẮC TRẢ LỜI THÔNG MINH:
+1. Trả lời đúng trọng tâm, tự nhiên như người bản địa am hiểu Đà Nẵng – Hội An, dinh dưỡng và mua sắm.
+2. Nếu người dùng hỏi về "món này / cái này / sản phẩm vừa quét", hãy dựa trực tiếp vào mục [Đối tượng người dùng VỪA QUÉT] ở trên để phân tích sâu (calo, dinh dưỡng, cách dùng, nơi mua, so sánh giá).
+3. Nếu có mục [Dữ liệu Google thực tế vừa tra cứu], ưu tiên lấy thông tin chuẩn xác từ đó, không bịa tên quán hay địa chỉ.
+4. TUYỆT ĐỐI KHÔNG dùng ký tự Markdown như ** hoặc ## hoặc * trong câu trả lời; dùng gạch đầu dòng (-) hoặc đánh số (1., 2.) cho gọn đẹp trên khung chat.
+5. Viết súc tích (3–5 câu hoặc 3 ý chính), cuối câu gợi ý thêm 1 câu hỏi tiếp theo thật tự nhiên.`;
+}
+
+async function handleGroqChat({ apiKeys, messages, locationContext, lastScan }) {
+  const lastUserMsg = Array.isArray(messages)
+    ? [...messages].reverse().find((m) => m.role === "user")?.content || ""
+    : "";
+
+  const webContext = await searchWebContextForChat(lastUserMsg, lastScan);
+  const systemPrompt = buildSmartChatSystemPrompt({ locationContext, lastScan, webContext });
 
   const chatMessages = [
     { role: "system", content: systemPrompt },
@@ -487,8 +560,8 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên q
 
     const sortedModels = [
       ...(runtimeState.lastWorkingGroqChat ? [runtimeState.lastWorkingGroqChat] : []),
-      ...models.filter((m) => /llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m)),
-      ...models.filter((m) => !/llama-3\.3|llama-3\.1|llama-4|qwen|gpt-oss/i.test(m))
+      ...models.filter((m) => /llama-3\.3-70b|qwen-2\.5-32b|deepseek-r1-distill-llama-70b/i.test(m)),
+      ...models.filter((m) => /llama-3\.1|llama-4|qwen|gpt-oss/i.test(m))
     ];
 
     for (const model of [...new Set(sortedModels)].slice(0, 3)) {
@@ -503,8 +576,8 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên q
             },
             body: JSON.stringify({
               model,
-              temperature: 0.3,
-              max_tokens: 650,
+              temperature: 0.35,
+              max_tokens: 750,
               messages: chatMessages
             })
           },
@@ -524,7 +597,11 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên q
         if (reply) {
           runtimeState.lastWorkingGroqChat = model;
           runtimeState.lastWorkingGroqKey = apiKey;
-          return reply.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+          return reply
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .replace(/\*\*/g, "")
+            .replace(/^#+\s*/gm, "")
+            .trim();
         }
       } catch (_) {}
     }
@@ -596,10 +673,12 @@ async function runGeminiBackupVision({ apiKeys, prompt, imageBase64 }) {
   throw new Error(errors.slice(0, 2).join(" | ") || "Gemini backup unavailable");
 }
 
-async function handleGeminiBackupChat({ apiKeys, messages, locationContext }) {
-  const systemPrompt = `Bạn là trợ lý du lịch, ẩm thực và đời sống AIvolution am hiểu Đà Nẵng – Hội An.
-Vị trí người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
-Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác; không bịa tên quán hay địa chỉ.`;
+async function handleGeminiBackupChat({ apiKeys, messages, locationContext, lastScan }) {
+  const lastUserMsg = Array.isArray(messages)
+    ? [...messages].reverse().find((m) => m.role === "user")?.content || ""
+    : "";
+  const webContext = await searchWebContextForChat(lastUserMsg, lastScan);
+  const systemPrompt = buildSmartChatSystemPrompt({ locationContext, lastScan, webContext });
 
   const contents = (Array.isArray(messages) ? messages.slice(-10) : []).map((m) => ({
     role: m.role === "assistant" ? "model" : "user",
@@ -611,7 +690,7 @@ Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác; không
     for (const apiKey of apiKeys.slice(0, 2)) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = { temperature: 0.3, maxOutputTokens: 650 };
+        const generationConfig = { temperature: 0.35, maxOutputTokens: 750 };
         if (model.includes("3.8-flash")) {
           generationConfig.thinkingConfig = { thinkingBudget: 0 };
         }
@@ -632,7 +711,9 @@ Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác; không
         if (!res.ok) continue;
         const data = await res.json();
         const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (reply) return reply;
+        if (reply) {
+          return reply.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").trim();
+        }
       } catch (_) {}
     }
   }
@@ -1026,14 +1107,15 @@ module.exports = async (req, res) => {
       });
     }
 
-    // --- 2. CHẾ ĐỘ CHATBOT (Groq chính -> Gemini dự phòng) ---
+    // --- 2. CHẾ ĐỘ CHATBOT THÔNG MINH (Groq chính -> Gemini dự phòng) ---
     if (body.mode === "chat") {
       if (groqKeys.length) {
         try {
           const reply = await handleGroqChat({
             apiKeys: groqKeys,
             messages: body.messages,
-            locationContext: body.locationContext
+            locationContext: body.locationContext,
+            lastScan: body.lastScan
           });
           return res.status(200).json({ reply, provider: "groq" });
         } catch (err) {
@@ -1044,7 +1126,8 @@ module.exports = async (req, res) => {
         const reply = await handleGeminiBackupChat({
           apiKeys: geminiKeys,
           messages: body.messages,
-          locationContext: body.locationContext
+          locationContext: body.locationContext,
+          lastScan: body.lastScan
         });
         return res.status(200).json({ reply, provider: "gemini" });
       }
