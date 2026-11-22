@@ -1,0 +1,16 @@
+{
+  "name": "AIvolution — Quét AI Đà Nẵng – Hội An",
+  "short_name": "AIvolution",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#030303",
+  "theme_color": "#030303",
+  "icons": [
+    {
+      "src": "IMG_1713.jpeg",
+      "sizes": "512x512",
+      "type": "image/jpeg",
+      "purpose": "any"
+    }
+  ]
+}
