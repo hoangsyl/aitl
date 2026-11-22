@@ -1789,7 +1789,7 @@ input:focus-visible {
   }
 }
 /* ==========================================
-   IOS LIQUID GLASS TOUCH & DRAG PILL (BOTTOM NAV)
+   AIvolution
    ========================================== */
 .bottom-nav {
   touch-action: pan-y;
@@ -1876,5 +1876,37 @@ input:focus-visible {
   .bottom-nav .nav-btn,
   .bottom-nav .nav-scan-btn {
     transition: none;
+  }
+}
+/* ==========================================
+  AIvolution Team
+   ========================================== */
+[hidden] {
+  display: none !important;
+}
+
+.ring-center-icon svg path:last-child,
+.nav-scan-btn svg path:last-child {
+  transform-box: fill-box;
+  transform-origin: center;
+  will-change: transform, opacity;
+  animation: aivMiniQrSweep 1.8s ease-in-out infinite;
+}
+
+@keyframes aivMiniQrSweep {
+  0%, 100% {
+    transform: translateY(-4.5px);
+    opacity: 0.45;
+  }
+  50% {
+    transform: translateY(4.5px);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ring-center-icon svg path:last-child,
+  .nav-scan-btn svg path:last-child {
+    animation: none;
   }
 }
