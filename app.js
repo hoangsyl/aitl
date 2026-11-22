@@ -1,5 +1,7 @@
 const HISTORY_KEY = "aivolution_scan_history_v1";
-const MAX_HISTORY = 30;
+const TOTAL_SCANS_KEY = "aivolution_total_scans_v1";
+const THEME_KEY = "aivolution_theme_v1";
+const MAX_HISTORY = 10000;
 const FRIENDLY_ERROR_MSG =
   "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé.";
 
@@ -13,7 +15,7 @@ const views = {
 };
 
 const bottomNav = document.getElementById("bottomNav");
-const video = document.getElementById("camera");
+let video = document.getElementById("camera");
 const canvas = document.getElementById("canvas");
 const fileInput = document.getElementById("fileInput");
 const statusPill = document.getElementById("statusPill");
@@ -22,6 +24,10 @@ const gpsDot = document.getElementById("gpsDot");
 const gpsText = document.getElementById("gpsText");
 const historyBadge = document.getElementById("historyBadge");
 const confirmDialog = document.getElementById("confirmDialog");
+const btnToggleTheme = document.getElementById("btnToggleTheme");
+const iconMoon = document.getElementById("iconMoon");
+const iconSun = document.getElementById("iconSun");
+const themeColorMeta = document.getElementById("themeColorMeta");
 
 // State
 let activeView = "home";
@@ -29,6 +35,7 @@ let previousView = "home";
 let scanMode = "auto";
 let facingMode = "environment";
 let currentStream = null;
+let cameraSessionId = 0;
 let currentCoords = { lat: null, lng: null };
 let currentSpeechText = "";
 let isSpeaking = false;
@@ -53,6 +60,43 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+// ==========================================
+// 0. CHẾ ĐỘ SÁNG / TỐI (LIGHT / DARK MODE)
+// ==========================================
+function applyTheme(theme) {
+  const isDark = theme === "dark";
+  document.documentElement.setAttribute("data-theme", isDark ? "dark" : "light");
+  if (themeColorMeta) {
+    themeColorMeta.setAttribute("content", isDark ? "#0B0B0D" : "#F3F3F5");
+  }
+  if (iconMoon && iconSun) {
+    iconMoon.hidden = isDark;
+    iconSun.hidden = !isDark;
+  }
+  if (btnToggleTheme) {
+    btnToggleTheme.setAttribute("aria-pressed", String(isDark));
+    btnToggleTheme.setAttribute(
+      "aria-label",
+      isDark ? "Chuyển sang chế độ sáng" : "Chuyển sang chế độ tối"
+    );
+  }
+  try {
+    localStorage.setItem(THEME_KEY, isDark ? "dark" : "light");
+  } catch (_) {}
+}
+
+function initTheme() {
+  const current = document.documentElement.getAttribute("data-theme") || "light";
+  applyTheme(current);
+}
+
+if (btnToggleTheme) {
+  btnToggleTheme.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme") || "light";
+    applyTheme(current === "dark" ? "light" : "dark");
+  });
 }
 
 // ==========================================
@@ -111,7 +155,7 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ==========================================
-// 2. LỊCH SỬ & THỐNG KÊ DASHBOARD
+// 2. LỊCH SỬ KHÔNG GIỚI HẠN (> 9.999 LƯỢT) & THỐNG KÊ
 // ==========================================
 function loadHistory() {
   try {
@@ -122,19 +166,44 @@ function loadHistory() {
   }
 }
 
+function getTotalScans() {
+  const historyLen = loadHistory().length;
+  try {
+    const saved = Number(localStorage.getItem(TOTAL_SCANS_KEY) || "0");
+    return Math.max(Number.isFinite(saved) ? saved : 0, historyLen);
+  } catch (_) {
+    return historyLen;
+  }
+}
+
+function setTotalScans(count) {
+  try {
+    localStorage.setItem(TOTAL_SCANS_KEY, String(Math.max(0, Math.floor(count))));
+  } catch (_) {}
+}
+
 function saveHistoryList(list) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
   } catch (_) {
-    const slim = list.map((item, idx) => (idx > 5 ? { ...item, thumb: "" } : item));
+    // Nếu bộ nhớ trình duyệt gần đầy, giữ ảnh thumbnail cho 20 mục gần nhất để vẫn lưu được hàng nghìn lượt quét
+    const slim = list.map((item, idx) => (idx >= 20 ? { ...item, thumb: "" } : item));
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(slim));
-    } catch (_) {}
+    } catch (_) {
+      const ultraSlim = list.slice(0, 500).map((item, idx) => (idx >= 5 ? { ...item, thumb: "" } : item));
+      try {
+        localStorage.setItem(HISTORY_KEY, JSON.stringify(ultraSlim));
+      } catch (_) {}
+    }
   }
   updateHistoryBadge();
 }
 
 function addToHistory(data, thumbDataUrl) {
+  const nextTotal = getTotalScans() + 1;
+  setTotalScans(nextTotal);
+
   const list = loadHistory();
   list.unshift({
     id: Date.now(),
@@ -152,9 +221,9 @@ function addToHistory(data, thumbDataUrl) {
 }
 
 function updateHistoryBadge() {
-  const count = loadHistory().length;
+  const count = getTotalScans();
   if (count > 0) {
-    historyBadge.textContent = count > 99 ? "99+" : String(count);
+    historyBadge.textContent = count > 9999 ? "9999+" : String(count);
     historyBadge.hidden = false;
   } else {
     historyBadge.hidden = true;
@@ -175,6 +244,7 @@ function parseCalories(str) {
 
 function renderHomeDashboard() {
   const list = loadHistory();
+  const totalScans = getTotalScans();
   let totalCalories = 0;
   let placesCount = 0;
   let foodCount = 0;
@@ -195,16 +265,17 @@ function renderHomeDashboard() {
     }
   });
 
-  document.getElementById("totalScansVal").textContent = list.length.toLocaleString("vi-VN");
+  document.getElementById("totalScansVal").textContent = totalScans.toLocaleString("vi-VN");
   document.getElementById("totalScansSub").textContent =
     totalCalories > 0
-      ? `Đã lưu ${list.length}/${MAX_HISTORY} mục • ${totalCalories.toLocaleString("vi-VN")} kcal`
-      : `Đã lưu ${list.length}/${MAX_HISTORY} mục`;
+      ? `Không giới hạn • ${totalCalories.toLocaleString("vi-VN")} kcal`
+      : `Không giới hạn • Đã lưu ${list.length.toLocaleString("vi-VN")} mục`;
 
+  // Vòng tiến độ mượt theo mốc 10 / 100 / 1000 / 10000 lượt
   const circumference = 226.2;
-  const milestone = list.length <= 10 ? 10 : MAX_HISTORY;
-  const ratio = Math.min(1, list.length / milestone);
-  const offset = circumference * (1 - (list.length === 0 ? 0.08 : Math.max(0.12, ratio)));
+  const milestone = totalScans <= 10 ? 10 : totalScans <= 100 ? 100 : totalScans <= 1000 ? 1000 : 10000;
+  const ratio = totalScans === 0 ? 0.08 : Math.min(1, Math.max(0.12, (totalScans % milestone || milestone) / milestone));
+  const offset = circumference * (1 - ratio);
   document.getElementById("heroRingProgress").setAttribute("stroke-dashoffset", offset.toFixed(1));
 
   const maxCat = Math.max(1, placesCount, foodCount, productCount);
@@ -217,7 +288,7 @@ function renderHomeDashboard() {
   document.getElementById("barProducts").style.transform = `scaleX(${Math.max(0.12, productCount / maxCat)})`;
 
   const clearBtn = document.getElementById("btnClearHistory");
-  clearBtn.hidden = list.length === 0;
+  clearBtn.hidden = list.length === 0 && totalScans === 0;
 
   const container = document.getElementById("homeHistoryContainer");
   if (!list.length) {
@@ -231,9 +302,12 @@ function renderHomeDashboard() {
     return;
   }
 
+  // Hiển thị 100 mục gần nhất trên danh sách để cuộn mượt (vẫn lưu đầy đủ trong bộ nhớ)
+  const visibleList = list.slice(0, 100);
+
   container.innerHTML = `
     <ul class="history-list">
-      ${list
+      ${visibleList
         .map((item) => {
           const kcal = parseCalories(item.data?.thong_tin_san_pham?.calo_uoc_tinh);
           const subText = kcal > 0
@@ -296,28 +370,63 @@ function updateLastThumbPreview() {
 }
 
 // ==========================================
-// 3. CAMERA & GPS
+// 3. CAMERA (LUÔN FULL MÀN HÌNH TRÊN IOS) & GPS
 // ==========================================
+function recreateVideoElement() {
+  if (!video || !video.parentNode) return;
+  const fresh = document.createElement("video");
+  fresh.id = "camera";
+  fresh.autoplay = true;
+  fresh.playsInline = true;
+  fresh.muted = true;
+  fresh.setAttribute("autoplay", "");
+  fresh.setAttribute("playsinline", "");
+  fresh.setAttribute("muted", "");
+  video.parentNode.replaceChild(fresh, video);
+  video = fresh;
+}
+
 async function startCamera() {
   cameraErrorBanner.hidden = true;
   stopCamera();
+  recreateVideoElement();
+
+  const session = ++cameraSessionId;
+
   try {
-    currentStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: false
     });
+
+    if (session !== cameraSessionId || activeView !== "scanner") {
+      stream.getTracks().forEach((t) => t.stop());
+      return;
+    }
+
+    currentStream = stream;
     video.srcObject = currentStream;
+    video.onloadedmetadata = () => {
+      video.play().catch(() => {});
+    };
     video.play().catch(() => {});
   } catch (_) {
-    cameraErrorBanner.textContent = "Không mở được camera. Bạn có thể bấm nút Thư viện bên dưới để chọn ảnh có sẵn.";
-    cameraErrorBanner.hidden = false;
+    if (session === cameraSessionId) {
+      cameraErrorBanner.textContent = "Không mở được camera. Bạn có thể bấm nút Thư viện bên dưới để chọn ảnh có sẵn.";
+      cameraErrorBanner.hidden = false;
+    }
   }
 }
 
 function stopCamera() {
+  cameraSessionId++;
   if (currentStream) {
     currentStream.getTracks().forEach((t) => t.stop());
     currentStream = null;
+  }
+  if (video) {
+    video.pause();
+    video.srcObject = null;
   }
 }
 
@@ -325,7 +434,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && activeView === "scanner") {
     const track = currentStream?.getVideoTracks?.()[0];
     if (!track || track.readyState === "ended") startCamera();
-    else if (video.paused) video.play().catch(() => {});
+    else if (video && video.paused) video.play().catch(() => {});
   }
 });
 
@@ -619,7 +728,7 @@ function makeThumbnail(sourceCanvas) {
     thumbCanvas.width = Math.round(sourceCanvas.width * scale);
     thumbCanvas.height = Math.round(sourceCanvas.height * scale);
     thumbCanvas.getContext("2d").drawImage(sourceCanvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
-    return thumbCanvas.toDataURL("image/jpeg", 0.68);
+    return thumbCanvas.toDataURL("image/jpeg", 0.65);
   } catch (_) {
     return "";
   }
@@ -785,7 +894,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
 
     <div class="highlight-bar">
       <span>${escapeHtml(highlightText)}</span>
-      <span class="tabular-nums" style="font-size:12px;color:#62626B;">${escapeHtml(timeOrElapsed)}</span>
+      <span class="highlight-meta tabular-nums">${escapeHtml(timeOrElapsed)}</span>
     </div>
 
     ${ringBlock}
@@ -834,11 +943,12 @@ document.getElementById("btnRefreshWeather").addEventListener("click", () => ren
 document.getElementById("detailBackBtn").addEventListener("click", () => navigateTo(previousView || "home"));
 document.getElementById("detailCloseBtn").addEventListener("click", () => navigateTo("home"));
 
-// Xóa lịch sử bằng AlertDialog chuẩn (không làm đơ camera iOS)
+// Xóa lịch sử bằng AlertDialog chuẩn
 document.getElementById("btnClearHistory").addEventListener("click", () => {
   if (typeof confirmDialog.showModal === "function") {
     confirmDialog.showModal();
   } else {
+    setTotalScans(0);
     saveHistoryList([]);
     renderHomeDashboard();
   }
@@ -847,6 +957,7 @@ document.getElementById("btnClearHistory").addEventListener("click", () => {
 document.getElementById("dialogCancelBtn").addEventListener("click", () => confirmDialog.close());
 document.getElementById("dialogConfirmBtn").addEventListener("click", () => {
   confirmDialog.close();
+  setTotalScans(0);
   saveHistoryList([]);
   renderHomeDashboard();
 });
@@ -880,7 +991,7 @@ document.getElementById("switchBtn").addEventListener("click", () => {
 });
 
 document.getElementById("captureBtn").addEventListener("click", () => {
-  if (!video.videoWidth) return;
+  if (!video || !video.videoWidth) return;
   const maxW = 800;
   const scale = Math.min(1, maxW / video.videoWidth);
   canvas.width = video.videoWidth * scale;
@@ -914,6 +1025,7 @@ fileInput.addEventListener("change", (e) => {
 });
 
 // Khởi chạy ban đầu
+initTheme();
 updateHistoryBadge();
 renderHomeDashboard();
 initGPS();
