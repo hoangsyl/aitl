@@ -1680,31 +1680,39 @@ input:focus-visible {
   }
 }
 /* ==========================================
-   SCANNER DOT-MATRIX SWEEP ANIMATION
+   SCANNER DOT-MATRIX SWEEP (GỌN TRONG KHUNG VUÔNG)
    ========================================== */
-.scan-frame,
-.scanner-box,
-.viewfinder-box {
-  position: relative;
-  overflow: hidden;
+.viewfinder .vf-line {
+  display: none !important;
+  opacity: 0 !important;
 }
 
 .scan-dot-sweep {
   position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(68vw, 272px);
+  height: min(68vw, 272px);
+  transform: translate(-50%, -50%);
+  border-radius: 26px;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.scan-dot-sweep::before {
+  content: "";
+  position: absolute;
   left: 0;
   right: 0;
   top: 0;
-  height: 46%;
-  pointer-events: none;
-  z-index: 2;
-  /* Lưới chấm tròn nhỏ đều nhau giống ảnh mẫu */
+  height: 48%;
   background-image: radial-gradient(
     circle,
     rgba(255, 255, 255, 0.92) 1.65px,
     transparent 1.85px
   );
   background-size: 9px 9px;
-  /* Mờ dần lên trên và đậm nét ở mép dưới cùng */
   -webkit-mask-image: linear-gradient(
     to bottom,
     transparent 0%,
@@ -1723,13 +1731,12 @@ input:focus-visible {
   animation: aivDotSweep 2.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
 }
 
-/* Mép laser sáng mảnh ở đáy dải chấm */
 .scan-dot-sweep::after {
   content: "";
   position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: 8px;
+  right: 8px;
+  top: 48%;
   height: 2px;
   background: linear-gradient(
     90deg,
@@ -1739,15 +1746,20 @@ input:focus-visible {
     rgba(148, 216, 45, 0.85) 80%,
     transparent 100%
   );
+  will-change: transform, opacity;
+  animation: aivDotSweep 2.4s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite;
 }
 
-/* Khi đang bấm chụp và AI phân tích, dải chấm chuyển sang sắc xanh AIvolution & quét nhanh hơn */
-#viewScanner:has(#statusPill.show) .scan-dot-sweep {
+#viewScanner:has(#statusPill.show) .scan-dot-sweep::before {
   background-image: radial-gradient(
     circle,
     rgba(148, 216, 45, 0.95) 1.8px,
     transparent 2px
   );
+  animation-duration: 1.25s;
+}
+
+#viewScanner:has(#statusPill.show) .scan-dot-sweep::after {
   animation-duration: 1.25s;
 }
 
@@ -1763,15 +1775,16 @@ input:focus-visible {
     opacity: 1;
   }
   100% {
-    transform: translate3d(0, 220%, 0);
+    transform: translate3d(0, 110%, 0);
     opacity: 0;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .scan-dot-sweep {
+  .scan-dot-sweep::before,
+  .scan-dot-sweep::after {
     animation: none;
-    transform: translate3d(0, 60%, 0);
+    transform: translate3d(0, 30%, 0);
     opacity: 0.45;
   }
 }
