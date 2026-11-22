@@ -33,7 +33,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=17" />
+  <link rel="stylesheet" href="style.css?v=24" />
 </head>
 <body>
   <div class="app-shell">
@@ -166,6 +166,7 @@
       </header>
 
       <div class="viewfinder" aria-hidden="true">
+        <span class="scan-dot-sweep"></span>
         <span class="vf-corner tl"></span>
         <span class="vf-corner tr"></span>
         <span class="vf-corner bl"></span>
@@ -264,7 +265,7 @@
     </dialog>
   </div>
 
-  <script src="app.js?v=23"></script>
+  <script src="app.js?v=24"></script>
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js");
