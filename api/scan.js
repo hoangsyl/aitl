@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (TỐI ƯU TỐC ĐỘ 2.5–4s)
+// 1. CẤU HÌNH HỆ THỐNG (NHANH + CHỐNG CẮT JSON)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -16,10 +16,10 @@ const CONFIG = {
     "meta-llama/llama-4-maverick-17b-128e-instruct"
   ],
   GEMINI_BACKUP_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  GROQ_ATTEMPT_TIMEOUT_MS: 3800,
+  GROQ_ATTEMPT_TIMEOUT_MS: 5500,
   GROQ_MODELS_TIMEOUT_MS: 1500,
   SERPER_TIMEOUT_MS: 1100,
-  GEMINI_BACKUP_TIMEOUT_MS: 4800,
+  GEMINI_BACKUP_TIMEOUT_MS: 5500,
   CHAT_TIMEOUT_MS: 4500,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 15 * 60 * 1000,
@@ -73,7 +73,7 @@ function markKeyCooldown(apiKey, ms = CONFIG.KEY_COOLDOWN_429_MS) {
   if (runtimeState.lastWorkingGroqKey === apiKey) runtimeState.lastWorkingGroqKey = null;
 }
 
-function fetchWithTimeout(url, options = {}, timeoutMs = 3800) {
+function fetchWithTimeout(url, options = {}, timeoutMs = 5500) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(800, timeoutMs));
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
@@ -277,7 +277,7 @@ QUY TẮC BẮT BUỘC:
 2. Calo: chỉ tính cho món ăn/đồ uống theo bao bì hoặc định lượng thực tế (VD: "420 - 480 kcal"). Đồ vật không ăn được BẮT BUỘC ghi "Không áp dụng".
 3. Giá VNĐ: ghi đúng giá trên tem (nếu có) hoặc khoảng giá bán lẻ thực tế tại Việt Nam (VD: "35.000 - 50.000 VNĐ").
 4. Ẩm thực: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
-5. Viết ngắn gọn 3-4 câu mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ:
+5. Viết ngắn gọn 1–2 câu mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ:
 
 {
   "khong_nhan_dien_duoc": false,
@@ -311,7 +311,7 @@ QUY TẮC BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1: GROQ LPU (GỌI THẲNG SCOUT – SIÊU NHANH)
+// 5. TẦNG 1: GROQ LPU (GỌI THẲNG SCOUT – JSON CHUẨN 100%)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -382,7 +382,8 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 500,
+        max_tokens: 850,
+        response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
@@ -495,7 +496,7 @@ Trả lời bằng tiếng Việt ngắn gọn, chính xác; không bịa tên q
             body: JSON.stringify({
               model,
               temperature: 0.3,
-              max_tokens: 550,
+              max_tokens: 650,
               messages: chatMessages
             })
           },
@@ -537,7 +538,7 @@ async function runGeminiBackupVision({ apiKeys, prompt, imageBase64 }) {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
         const generationConfig = {
           temperature: 0.1,
-          maxOutputTokens: 550,
+          maxOutputTokens: 850,
           responseMimeType: "application/json"
         };
         if (model.includes("3.8-flash")) {
@@ -602,7 +603,7 @@ Trả lời bằng tiếng Việt tự nhiên, ngắn gọn, chính xác; không
     for (const apiKey of apiKeys.slice(0, 2)) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = { temperature: 0.3, maxOutputTokens: 550 };
+        const generationConfig = { temperature: 0.3, maxOutputTokens: 650 };
         if (model.includes("3.8-flash")) {
           generationConfig.thinkingConfig = { thinkingBudget: 0 };
         }
