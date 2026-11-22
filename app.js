@@ -911,6 +911,10 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
     ? `Ước tính: ${sp.calo_uoc_tinh}`
     : (data.dia_chi || "Đà Nẵng – Hội An");
 
+  const providerBadge = data._provider
+    ? ` • ${escapeHtml(String(data._provider).split(":")[0].toUpperCase())}`
+    : "";
+
   const ringBlock = sp && sp.hien_thi ? `
     <div class="ring-grid">
       <div class="ring-tile">
@@ -982,7 +986,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
 
     <div class="highlight-bar">
       <span>${escapeHtml(highlightText)}</span>
-      <span class="highlight-meta tabular-nums">${escapeHtml(timeOrElapsed)}</span>
+      <span class="highlight-meta tabular-nums">${escapeHtml(timeOrElapsed)}${providerBadge}</span>
     </div>
 
     ${ringBlock}
