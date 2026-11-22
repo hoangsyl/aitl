@@ -12,9 +12,9 @@ const crypto = require("crypto");
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
   GEMINI_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  TOTAL_VISION_BUDGET_MS: 9200,
-  GEMINI_BUDGET_MS: 6200,
-  GEMINI_ATTEMPT_TIMEOUT_MS: 4800,
+  TOTAL_VISION_BUDGET_MS: 9500,
+  GEMINI_BUDGET_MS: 6500,
+  GEMINI_ATTEMPT_TIMEOUT_MS: 6200,
   GROQ_ATTEMPT_TIMEOUT_MS: 3200,
   GROQ_MODELS_TIMEOUT_MS: 1600,
   CHAT_TIMEOUT_MS: 6500,
@@ -396,23 +396,62 @@ async function callGeminiVisionOnce({ apiKey, model, prompt, imageBase64, timeou
 async function runGeminiVision({ apiKeys, prompt, imageBase64, deadlineMs }) {
   const errors = [];
   const models = getOrderedGeminiModels();
+  const primaryModel = models[0];
+  const raceKeys = apiKeys.slice(0, 2);
 
+  // Chạy đua song song 2 key đầu tiên trên model ưu tiên để lấy phản hồi nhanh nhất
+  const remaining = deadlineMs - Date.now();
+  if (primaryModel && raceKeys.length && remaining >= 1500) {
+    const attemptTimeout = Math.min(CONFIG.GEMINI_ATTEMPT_TIMEOUT_MS, remaining);
+    try {
+      const winner = await Promise.any(
+        raceKeys.map(async (apiKey) => {
+          try {
+            const result = await callGeminiVisionOnce({
+              apiKey,
+              model: primaryModel,
+              prompt,
+              imageBase64,
+              timeoutMs: attemptTimeout
+            });
+            if (result && typeof result === "object") {
+              return { result, apiKey };
+            }
+            throw new Error("Empty result");
+          } catch (err) {
+            if (err.status === 404) runtimeState.badGeminiModels.add(primaryModel);
+            else if (err.status === 401 || err.status === 403) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+            else if (err.status === 429) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+            else if (err.status === 500 || err.status === 503 || err.isTimeout) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_5XX_MS);
+            throw err;
+          }
+        })
+      );
+
+      runtimeState.lastWorkingGeminiModel = primaryModel;
+      runtimeState.lastWorkingGeminiKey = winner.apiKey;
+      return { result: winner.result, provider: `gemini:${primaryModel}` };
+    } catch (aggErr) {
+      const list = Array.isArray(aggErr?.errors) ? aggErr.errors : [aggErr];
+      errors.push(...list.map((e) => e?.message || "Gemini race failed"));
+    }
+  }
+
+  // Dự phòng: thử các key/model còn lại nếu còn đủ thời gian (>= 2.2s)
   for (const model of models) {
+    if (runtimeState.badGeminiModels.has(model)) continue;
     for (const apiKey of apiKeys) {
-      const remaining = deadlineMs - Date.now();
-      if (remaining < 1200) {
-        errors.push("Hết ngân sách thời gian Gemini");
-        break;
-      }
+      if (model === primaryModel && raceKeys.includes(apiKey)) continue;
+      const left = deadlineMs - Date.now();
+      if (left < 2200) break;
 
-      const attemptTimeout = Math.min(CONFIG.GEMINI_ATTEMPT_TIMEOUT_MS, remaining);
       try {
         const result = await callGeminiVisionOnce({
           apiKey,
           model,
           prompt,
           imageBase64,
-          timeoutMs: attemptTimeout
+          timeoutMs: Math.min(CONFIG.GEMINI_ATTEMPT_TIMEOUT_MS, left)
         });
         if (result && typeof result === "object") {
           runtimeState.lastWorkingGeminiModel = model;
@@ -421,34 +460,22 @@ async function runGeminiVision({ apiKeys, prompt, imageBase64, deadlineMs }) {
         }
       } catch (err) {
         errors.push(err.message || `Gemini(${model}): Failed`);
-
         if (err.status === 404) {
           runtimeState.badGeminiModels.add(model);
-          break; // Đổi ngay sang model khác, không thử tiếp các key với model 404
+          break;
         }
-        if (err.status === 401 || err.status === 403) {
-          markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
-          continue;
-        }
-        if (err.status === 429) {
-          markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-          continue;
-        }
-        if (err.status === 500 || err.status === 503 || err.isTimeout) {
-          markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_5XX_MS);
-          continue;
-        }
+        if (err.status === 401 || err.status === 403) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+        else if (err.status === 429) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+        else if (err.status === 500 || err.status === 503 || err.isTimeout) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_5XX_MS);
       }
     }
-
-    if (deadlineMs - Date.now() < 1200) break;
+    if (deadlineMs - Date.now() < 2200) break;
   }
 
   const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Gemini không phản hồi kịp");
   finalErr.isRateLimit = errors.some((e) => e.includes("429"));
   throw finalErr;
 }
-
 async function handleGeminiChat({ apiKeys, messages, locationContext }) {
   const systemPrompt = `Bạn là trợ lý du lịch, ẩm thực và đời sống AIvolution am hiểu Đà Nẵng – Hội An.
 Vị trí người dùng: ${locationContext || "Đà Nẵng – Hội An"}.
