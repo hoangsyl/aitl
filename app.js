@@ -1489,7 +1489,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
 }
 
 // ==========================================
-// 7. GẮN SỰ KIỆN TƯƠNG TÁC
+// AIvolution
 // ==========================================
 document.querySelectorAll("[data-nav]").forEach((btn) => {
   btn.addEventListener("click", () => navigateTo(btn.dataset.nav));
@@ -1592,13 +1592,13 @@ updateHistoryBadge();
 renderHomeDashboard();
 initGPS();
 // ==========================================
-// 8. HIỆU ỨNG LIQUID GLASS KHI CHẠM GIỮ & KÉO THANH ĐIỀU HƯỚNG
+// AIvolution Team 
 // ==========================================
 (function initBottomNavLiquidGlass() {
   if (!bottomNav) return;
 
   const glassPill = document.createElement("span");
-  glassPill.className = "nav-liquid-glass";
+  glassPill.className = "nav-liquid-glass is-visible";
   glassPill.setAttribute("aria-hidden", "true");
   bottomNav.appendChild(glassPill);
 
@@ -1611,6 +1611,35 @@ initGPS();
     if (hoveredBtn) hoveredBtn.classList.remove("is-glass-hover");
     hoveredBtn = btn;
     if (hoveredBtn) hoveredBtn.classList.add("is-glass-hover");
+  }
+
+  function getActiveTabButton() {
+    if (activeView === "weather") {
+      return bottomNav.querySelector('.nav-btn[data-nav="weather"]');
+    }
+    if (activeView === "chat") {
+      return bottomNav.querySelector('.nav-btn[data-nav="chat"]');
+    }
+    return bottomNav.querySelector('.nav-btn[data-nav="home"]:not(#navHistoryBtn)');
+  }
+
+  function snapGlassToButton(btn, scale = 1) {
+    if (!btn || bottomNav.hidden) return;
+    const navRect = bottomNav.getBoundingClientRect();
+    const btnRect = btn.getBoundingClientRect();
+    if (!navRect.width || !btnRect.width) return;
+
+    const isScan = btn.classList.contains("nav-scan-btn");
+    const pillW = isScan ? 68 : 60;
+    const pillH = isScan ? 64 : 46;
+    const centerInNav = btnRect.left - navRect.left + btnRect.width / 2;
+    const leftX = centerInNav - pillW / 2;
+
+    glassPill.style.width = `${pillW}px`;
+    glassPill.style.height = `${pillH}px`;
+    glassPill.classList.remove("is-dragging");
+    glassPill.classList.add("is-visible");
+    glassPill.style.transform = `translate3d(${leftX.toFixed(1)}px, -50%, 0) scale(${scale})`;
   }
 
   function moveGlassTo(clientX, dragging) {
@@ -1632,10 +1661,10 @@ initGPS();
     setHoveredButton(nearest);
 
     const btnRect = nearest.getBoundingClientRect();
-    const pillW = nearest.classList.contains("nav-scan-btn") ? 68 : 60;
-    const pillH = nearest.classList.contains("nav-scan-btn") ? 64 : 46;
+    const isScan = nearest.classList.contains("nav-scan-btn");
+    const pillW = isScan ? 68 : 60;
+    const pillH = isScan ? 64 : 46;
 
-    // Kéo nhẹ theo ngón tay nhưng vẫn hút về tâm nút gần nhất như iOS
     const btnCenterInNav = btnRect.left - navRect.left + btnRect.width / 2;
     const fingerInNav = Math.min(navRect.width - pillW / 2, Math.max(pillW / 2, clientX - navRect.left));
     const targetCenter = btnCenterInNav * 0.72 + fingerInNav * 0.28;
@@ -1651,11 +1680,13 @@ initGPS();
   function releaseGlass() {
     if (!isHolding) return;
     isHolding = false;
-    glassPill.classList.remove("is-dragging", "is-visible");
-    if (hoveredBtn) {
-      const target = hoveredBtn;
-      setHoveredButton(null);
+    const target = hoveredBtn;
+    setHoveredButton(null);
+    if (target) {
+      snapGlassToButton(target, 1);
       target.click();
+    } else {
+      snapGlassToButton(getActiveTabButton(), 1);
     }
   }
 
@@ -1675,7 +1706,20 @@ initGPS();
   bottomNav.addEventListener("pointerup", releaseGlass);
   bottomNav.addEventListener("pointercancel", () => {
     isHolding = false;
-    glassPill.classList.remove("is-dragging", "is-visible");
     setHoveredButton(null);
+    snapGlassToButton(getActiveTabButton(), 1);
   });
+
+  // Đồng bộ vị trí giọt kính khi chuyển màn hình hoặc xoay màn hình
+  const observer = new MutationObserver(() => {
+    if (!isHolding && !bottomNav.hidden) {
+      requestAnimationFrame(() => snapGlassToButton(getActiveTabButton(), 1));
+    }
+  });
+  observer.observe(bottomNav, { attributes: true, attributeFilter: ["hidden"] });
+  window.addEventListener("resize", () => {
+    if (!isHolding) snapGlassToButton(getActiveTabButton(), 1);
+  });
+
+  requestAnimationFrame(() => snapGlassToButton(getActiveTabButton(), 1));
 })();
