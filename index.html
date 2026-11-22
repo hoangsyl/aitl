@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>AIvolution — Quét AI & Theo dõi Khám phá Đà Nẵng – Hội An</title>
   <meta name="description" content="Ứng dụng nhận diện địa điểm, món ăn, sản phẩm tại Đà Nẵng – Hội An bằng AI kèm thuyết minh giọng nói, thời tiết GPS và trợ lý du lịch." />
-  <meta name="theme-color" content="#F3F3F5" />
+  <meta id="themeColorMeta" name="theme-color" content="#F3F3F5" />
   <link rel="canonical" href="https://aitl-teal.vercel.app/" />
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%23030303'/%3E%3Ccircle cx='32' cy='32' r='16' fill='%23DDEFB5'/%3E%3C/svg%3E" />
 
@@ -18,7 +18,20 @@
   <meta name="twitter:title" content="AIvolution — Quét AI & Khám phá Đà Nẵng – Hội An" />
   <meta name="twitter:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm ước tính calo và thuyết minh tự nhiên." />
 
-  <link rel="stylesheet" href="style.css?v=14" />
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem("aivolution_theme_v1");
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = saved || (prefersDark ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+        var meta = document.getElementById("themeColorMeta");
+        if (meta) meta.setAttribute("content", theme === "dark" ? "#0B0B0D" : "#F3F3F5");
+      } catch (_) {}
+    })();
+  </script>
+
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 <body>
   <div class="app-shell">
@@ -26,13 +39,16 @@
     <main id="viewHome" class="view view-home" aria-label="Trang tổng quan">
       <header class="home-header">
         <div class="user-profile">
-          <div class="avatar-badge" aria-hidden="true">AI</div>
           <div class="user-text">
             <span class="greeting-sub">Chào mừng trở lại</span>
             <span class="greeting-name">AIvolution</span>
           </div>
         </div>
         <div class="header-actions">
+          <button type="button" class="circle-btn" id="btnToggleTheme" aria-label="Chuyển sang chế độ tối" aria-pressed="false">
+            <svg id="iconMoon" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            <svg id="iconSun" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>
+          </button>
           <button type="button" class="circle-btn" id="btnQuickWeather" aria-label="Xem thời tiết">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="M20 12h2"/><path d="m19.07 4.93-1.41 1.41"/><path d="M15.947 12.65a4 4 0 0 0-5.925-4.128"/><path d="M13 22H7a5 5 0 1 1 4.9-6H13a3 3 0 0 1 0 6Z"/></svg>
           </button>
@@ -58,7 +74,7 @@
             <span id="totalScansVal" class="hero-number tabular-nums">0</span>
             <span class="hero-unit">lượt</span>
           </div>
-          <span id="totalScansSub" class="hero-sub tabular-nums">Đã lưu 0/30 mục</span>
+          <span id="totalScansSub" class="hero-sub tabular-nums">Không giới hạn • Đã lưu 0 mục</span>
         </div>
         <div class="hero-ring-wrap" aria-hidden="true">
           <svg class="ring-svg" viewBox="0 0 88 88">
@@ -238,7 +254,7 @@
     <!-- ==================== ALERT DIALOG XÓA LỊCH SỬ ==================== -->
     <dialog id="confirmDialog" class="alert-dialog" aria-labelledby="dialogTitle" aria-describedby="dialogDesc">
       <h2 id="dialogTitle" class="dialog-title">Xóa toàn bộ lịch sử?</h2>
-      <p id="dialogDesc" class="dialog-desc">Tất cả các mục đã quét và lịch sử khám phá sẽ bị xóa khỏi thiết bị này.</p>
+      <p id="dialogDesc" class="dialog-desc">Tất cả các mục đã quét và bộ đếm lượt quét sẽ được đặt lại trên thiết bị này.</p>
       <div class="dialog-actions">
         <button type="button" id="dialogCancelBtn" class="btn-pill btn-secondary">Hủy</button>
         <button type="button" id="dialogConfirmBtn" class="btn-pill btn-danger">Xóa tất cả</button>
@@ -246,6 +262,6 @@
     </dialog>
   </div>
 
-  <script src="app.js?v=15"></script>
+  <script src="app.js?v=17"></script>
 </body>
 </html>
