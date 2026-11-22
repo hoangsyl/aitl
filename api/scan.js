@@ -973,67 +973,74 @@ async function generateVoiceBase64(rawText) {
 // 7.5 TỰ ĐỘNG TRA GIÁ THẬT TRÊN GOOGLE (SERPER API)
 // ==========================================
 async function fetchRealPriceFromGoogle(productName) {
-  const apiKey = process.env.SERPER_API_KEY;
-  if (!apiKey || !productName) return null;
+  const apiKeys = collectApiKeys("SERPER_API_KEY");
+  if (!apiKeys.length || !productName) return null;
 
-  try {
-    const res = await fetchWithTimeout(
-      "https://google.serper.dev/search",
-      {
-        method: "POST",
-        headers: {
-          "X-API-KEY": apiKey,
-          "Content-Type": "application/json"
+  for (const apiKey of apiKeys) {
+    try {
+      const res = await fetchWithTimeout(
+        "https://google.serper.dev/search",
+        {
+          method: "POST",
+          headers: {
+            "X-API-KEY": apiKey,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            q: `giá ${productName} chính hãng`,
+            gl: "vn",
+            hl: "vi",
+            num: 6
+          })
         },
-        body: JSON.stringify({
-          q: `giá ${productName} chính hãng`,
-          gl: "vn",
-          hl: "vi",
-          num: 6
-        })
-      },
-      2000
-    );
+        2000
+      );
 
-    if (!res.ok) return null;
-    const data = await res.json();
+      if (res.status === 400 || res.status === 401 || res.status === 403 || res.status === 429) {
+        markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+        continue; // Hết credit hoặc lỗi key -> nhảy ngay sang key kế tiếp
+      }
+      if (!res.ok) continue;
 
-    const texts = [];
-    if (data.answerBox?.snippet) texts.push(data.answerBox.snippet);
-    (data.organic || []).forEach((item) => {
-      if (item.price) texts.push(String(item.price));
-      if (item.title) texts.push(item.title);
-      if (item.snippet) texts.push(item.snippet);
-    });
+      const data = await res.json();
+      const texts = [];
+      if (data.answerBox?.snippet) texts.push(data.answerBox.snippet);
+      (data.organic || []).forEach((item) => {
+        if (item.price) texts.push(String(item.price));
+        if (item.title) texts.push(item.title);
+        if (item.snippet) texts.push(item.snippet);
+      });
 
-    const fullText = texts.join(" | ");
-    const prices = [];
+      const fullText = texts.join(" | ");
+      const prices = [];
 
-    const regexVnd = /(?:₫\s*)?(\d{1,3}(?:[.,]\d{3})+)\s*(?:đ|₫|vnđ|vnd)?/gi;
-    let match;
-    while ((match = regexVnd.exec(fullText)) !== null) {
-      const val = Number(match[1].replace(/[.,]/g, ""));
-      if (val >= 5000 && val <= 100000000) prices.push(val);
+      const regexVnd = /(?:₫\s*)?(\d{1,3}(?:[.,]\d{3})+)\s*(?:đ|₫|vnđ|vnd)?/gi;
+      let match;
+      while ((match = regexVnd.exec(fullText)) !== null) {
+        const val = Number(match[1].replace(/[.,]/g, ""));
+        if (val >= 5000 && val <= 100000000) prices.push(val);
+      }
+
+      const regexK = /\b(\d{2,4})k\b/gi;
+      while ((match = regexK.exec(fullText)) !== null) {
+        const val = Number(match[1]) * 1000;
+        if (val >= 5000 && val <= 50000000) prices.push(val);
+      }
+
+      if (!prices.length) return null;
+
+      prices.sort((a, b) => a - b);
+      const trimmed = prices.length >= 4 ? prices.slice(1, -1) : prices;
+      const minP = trimmed[0];
+      const maxP = trimmed[trimmed.length - 1];
+
+      const fmt = (n) => n.toLocaleString("vi-VN");
+      return minP === maxP ? `${fmt(minP)} VNĐ` : `${fmt(minP)} - ${fmt(maxP)} VNĐ`;
+    } catch (_) {
+      continue;
     }
-
-    const regexK = /\b(\d{2,4})k\b/gi;
-    while ((match = regexK.exec(fullText)) !== null) {
-      const val = Number(match[1]) * 1000;
-      if (val >= 5000 && val <= 50000000) prices.push(val);
-    }
-
-    if (!prices.length) return null;
-
-    prices.sort((a, b) => a - b);
-    const trimmed = prices.length >= 4 ? prices.slice(1, -1) : prices;
-    const minP = trimmed[0];
-    const maxP = trimmed[trimmed.length - 1];
-
-    const fmt = (n) => n.toLocaleString("vi-VN");
-    return minP === maxP ? `${fmt(minP)} VNĐ` : `${fmt(minP)} - ${fmt(maxP)} VNĐ`;
-  } catch (_) {
-    return null;
   }
+  return null;
 }
 
 // ==========================================
