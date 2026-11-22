@@ -1591,3 +1591,91 @@ initTheme();
 updateHistoryBadge();
 renderHomeDashboard();
 initGPS();
+// ==========================================
+// 8. HIỆU ỨNG LIQUID GLASS KHI CHẠM GIỮ & KÉO THANH ĐIỀU HƯỚNG
+// ==========================================
+(function initBottomNavLiquidGlass() {
+  if (!bottomNav) return;
+
+  const glassPill = document.createElement("span");
+  glassPill.className = "nav-liquid-glass";
+  glassPill.setAttribute("aria-hidden", "true");
+  bottomNav.appendChild(glassPill);
+
+  const buttons = Array.from(bottomNav.querySelectorAll(".nav-btn, .nav-scan-btn"));
+  let isHolding = false;
+  let hoveredBtn = null;
+
+  function setHoveredButton(btn) {
+    if (hoveredBtn === btn) return;
+    if (hoveredBtn) hoveredBtn.classList.remove("is-glass-hover");
+    hoveredBtn = btn;
+    if (hoveredBtn) hoveredBtn.classList.add("is-glass-hover");
+  }
+
+  function moveGlassTo(clientX, dragging) {
+    const navRect = bottomNav.getBoundingClientRect();
+    let nearest = null;
+    let minDist = Infinity;
+
+    buttons.forEach((btn) => {
+      const r = btn.getBoundingClientRect();
+      const center = r.left + r.width / 2;
+      const dist = Math.abs(clientX - center);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = btn;
+      }
+    });
+
+    if (!nearest) return;
+    setHoveredButton(nearest);
+
+    const btnRect = nearest.getBoundingClientRect();
+    const pillW = nearest.classList.contains("nav-scan-btn") ? 68 : 60;
+    const pillH = nearest.classList.contains("nav-scan-btn") ? 64 : 46;
+
+    // Kéo nhẹ theo ngón tay nhưng vẫn hút về tâm nút gần nhất như iOS
+    const btnCenterInNav = btnRect.left - navRect.left + btnRect.width / 2;
+    const fingerInNav = Math.min(navRect.width - pillW / 2, Math.max(pillW / 2, clientX - navRect.left));
+    const targetCenter = btnCenterInNav * 0.72 + fingerInNav * 0.28;
+    const leftX = targetCenter - pillW / 2;
+
+    glassPill.style.width = `${pillW}px`;
+    glassPill.style.height = `${pillH}px`;
+    glassPill.classList.toggle("is-dragging", Boolean(dragging));
+    glassPill.classList.add("is-visible");
+    glassPill.style.transform = `translate3d(${leftX.toFixed(1)}px, -50%, 0) scale(1.06)`;
+  }
+
+  function releaseGlass() {
+    if (!isHolding) return;
+    isHolding = false;
+    glassPill.classList.remove("is-dragging", "is-visible");
+    if (hoveredBtn) {
+      const target = hoveredBtn;
+      setHoveredButton(null);
+      target.click();
+    }
+  }
+
+  bottomNav.addEventListener("pointerdown", (e) => {
+    isHolding = true;
+    if (bottomNav.setPointerCapture) {
+      try { bottomNav.setPointerCapture(e.pointerId); } catch (_) {}
+    }
+    moveGlassTo(e.clientX, false);
+  });
+
+  bottomNav.addEventListener("pointermove", (e) => {
+    if (!isHolding) return;
+    moveGlassTo(e.clientX, true);
+  });
+
+  bottomNav.addEventListener("pointerup", releaseGlass);
+  bottomNav.addEventListener("pointercancel", () => {
+    isHolding = false;
+    glassPill.classList.remove("is-dragging", "is-visible");
+    setHoveredButton(null);
+  });
+})();
