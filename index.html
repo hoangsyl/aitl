@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>AIvolution — Nhận diện thông minh Đà Nẵng-Hội An</title>
+  <title>AIvolution — Quét AI & Theo dõi Khám phá Đà Nẵng – Hội An</title>
   <meta name="description" content="Ứng dụng nhận diện địa điểm, món ăn, sản phẩm tại Đà Nẵng – Hội An bằng AI kèm thuyết minh giọng nói, thời tiết GPS và trợ lý du lịch." />
   <meta id="themeColorMeta" name="theme-color" content="#F3F3F5" />
   <link rel="canonical" href="https://aitl-teal.vercel.app/" />
@@ -18,7 +18,7 @@
   <meta property="og:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm ước tính calo, thuyết minh tự nhiên và gợi ý bản địa." />
   <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="AIvolution — Quét AI & Khám phá Đà Nẵng – Hội An" />
-  <meta name="twitter:description" content="Nhận diện  điểm, món ăn và sản phẩm bằng AI kèm ước tính calo và thuyết minh tự nhiên." />
+  <meta name="twitter:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm ước tính calo và thuyết minh tự nhiên." />
 
   <script>
     (function () {
@@ -33,7 +33,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=24" />
+  <link rel="stylesheet" href="style.css?v=29" />
 </head>
 <body>
   <div class="app-shell">
@@ -92,29 +92,20 @@
       <!-- 3 Mini Stat Cards -->
       <section class="mini-grid" aria-label="Thống kê theo nhóm">
         <div class="mini-card">
-          <span class="mini-label">Địa điểm🗺️</span>
+          <span class="mini-label">Địa điểm</span>
           <div class="mini-bar-track"><div id="barPlaces" class="mini-bar-fill bar-green"></div></div>
           <span id="statPlaces" class="mini-val tabular-nums">0 mục</span>
         </div>
         <div class="mini-card">
-          <span class="mini-label">Món ăn🥘</span>
+          <span class="mini-label">Món ăn</span>
           <div class="mini-bar-track"><div id="barFood" class="mini-bar-fill bar-blue"></div></div>
           <span id="statFood" class="mini-val tabular-nums">0 mục</span>
         </div>
         <div class="mini-card">
-          <span class="mini-label">Sản phẩm🛠️</span>
+          <span class="mini-label">Sản phẩm</span>
           <div class="mini-bar-track"><div id="barProducts" class="mini-bar-fill bar-coral"></div></div>
           <span id="statProducts" class="mini-val tabular-nums">0 mục</span>
         </div>
-      </section>
-
-      <!-- Danh sách lịch sử quét -->
-      <section class="section-block" aria-labelledby="historyHeading">
-        <div class="section-head">
-          <h2 id="historyHeading" class="section-title">Lịch sử khám phá</h2>
-          <button type="button" id="btnClearHistory" class="text-danger-btn" hidden>Xóa tất cả</button>
-        </div>
-        <div id="homeHistoryContainer"></div>
       </section>
     </main>
 
@@ -138,7 +129,7 @@
         <button type="button" class="circle-btn" data-nav="home" aria-label="Quay lại trang chủ">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
         </button>
-        <h1 class="panel-title">Trợ lý AIvolution Team</h1>
+        <h1 class="panel-title">Trợ lý AIvolution</h1>
         <div class="circle-spacer" aria-hidden="true"></div>
       </header>
       <div id="chatBox" class="chat-box" role="log" aria-live="polite"></div>
@@ -149,7 +140,23 @@
       </form>
     </section>
 
-    <!-- ==================== 4. AI SCANNER (CAMERA) ==================== -->
+    <!-- ==================== 4. LỊCH SỬ KHÁM PHÁ (TAB 5) ==================== -->
+    <section id="viewHistory" class="view view-panel" hidden aria-label="Lịch sử khám phá">
+      <header class="panel-header">
+        <button type="button" class="circle-btn" data-nav="home" aria-label="Quay lại trang chủ">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
+        <h1 class="panel-title">Lịch sử khám phá</h1>
+        <div class="circle-spacer" aria-hidden="true"></div>
+      </header>
+      <div class="section-head" style="margin-bottom: 12px;">
+        <span class="section-title" style="font-size: 14px; opacity: 0.75;">Các mục đã quét</span>
+        <button type="button" id="btnClearHistory" class="text-danger-btn" hidden>Xóa tất cả</button>
+      </div>
+      <div id="homeHistoryContainer"></div>
+    </section>
+
+    <!-- ==================== 5. AI SCANNER (CAMERA) ==================== -->
     <section id="viewScanner" class="view view-scanner" hidden aria-label="Máy quét AI">
       <video id="camera" autoplay playsinline muted></video>
       <canvas id="canvas" hidden></canvas>
@@ -216,7 +223,7 @@
       </div>
     </section>
 
-    <!-- ==================== 5. CHI TIẾT NHẬN DIỆN (DETAIL VIEW) ==================== -->
+    <!-- ==================== 6. CHI TIẾT NHẬN DIỆN (DETAIL VIEW) ==================== -->
     <section id="viewDetail" class="view view-detail" hidden aria-label="Chi tiết kết quả nhận diện">
       <div class="detail-hero">
         <img id="detailHeroImg" class="detail-hero-img" alt="Ảnh đối tượng vừa quét" hidden />
@@ -248,7 +255,7 @@
       <button type="button" class="nav-btn" data-nav="chat" aria-label="Trợ lý Chatbot">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
       </button>
-      <button type="button" class="nav-btn" id="navHistoryBtn" data-nav="home" aria-label="Lịch sử đã lưu">
+      <button type="button" class="nav-btn" id="navHistoryBtn" data-nav="history" aria-label="Lịch sử đã lưu">
         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         <span id="historyBadge" class="nav-badge tabular-nums" hidden>0</span>
       </button>
@@ -265,7 +272,7 @@
     </dialog>
   </div>
 
-  <script src="app.js?v=28"></script>
+  <script src="app.js?v=29"></script>
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js");
