@@ -1,9 +1,9 @@
 /**
- * AIvolution Backend API (Vercel Serverless)
- * Architecture:
- *  - Tier 1: Google Gemini Free (gemini-2.5-flash -> gemini-2.5-flash-lite)
- *  - Tier 2: Groq Vision & Chat Fallback (Auto-discovery + Model Ranking)
- *  - Voice : Edge TTS (vi-VN-HoaiMyNeural) -> Google TTS MP3 Fallback
+ * AIvolution bản quyền 
+ * 
+ *  - 
+ *  - 
+ *  - 
  */
 
 const tls = require("tls");
@@ -15,8 +15,8 @@ const crypto = require("crypto");
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
   GEMINI_MODELS: ["gemini-2.5-flash", "gemini-2.5-flash-lite"],
-  GEMINI_TIMEOUT_MS: 12000,
-  GROQ_TIMEOUT_MS: 7000,
+  GEMINI_TIMEOUT_MS: 16000,
+  GROQ_TIMEOUT_MS: 7500,
   TTS_TIMEOUT_MS: 4500,
   MODELS_CACHE_TTL_MS: 10 * 60 * 1000,
   KEY_COOLDOWN_MS: 60 * 1000,
@@ -255,10 +255,10 @@ I. QUY TẮC QUAN SÁT & PHÂN BIỆT CHÍNH XÁC (BẮT BUỘC KIỂM TRA CHI T
 2. Bún bò (Huế / Đà Nẵng) vs Phở:
    - Bún bò: Sợi bún tròn to; nước dùng màu cam đỏ có váng dầu điều/sả ớt; topping thường có bắp bò, chả cua/chả lụa, giò heo, huyết.
    - Phở: Sợi bánh phở dẹt trắng mỏng; nước dùng trong thanh; thịt bò tái/nạm thái mỏng, nhiều hành lá.
-3. Đặc sản khác & Địa điểm:
+3. Đặc sản khác, Địa điểm & Đồ vật thường ngày:
    - Đọc chính xác chữ trên bảng hiệu, nhãn mác, bao bì, bia đá hoặc hoành phi Hán – Nôm.
    - Không bịa đặt địa chỉ số nhà cụ thể nếu ảnh không hiển thị; chỉ ghi khu vực chính xác (VD: "Phố cổ Hội An" hoặc "Đà Nẵng – Hội An").
-   - Nếu ảnh quá mờ, tối đen, bị che khuất hoặc không thể xác định đối tượng: trả về duy nhất {"khong_nhan_dien_duoc": true, "ly_do": "Ảnh chưa đủ rõ nét"}.
+   - Với mọi vật thể thường ngày (đồ gia dụng, thiết bị, quần áo, đồ uống...), hãy cứ nhận diện chính xác tên vật thể đó thuộc nhóm "Vật thể" hoặc "Sản phẩm". CHỈ trả về {"khong_nhan_dien_duoc": true, "ly_do": "Ảnh quá tối hoặc nhòe hoàn toàn"} khi ảnh đen kịt hoặc mờ không nhìn thấy bất kỳ hình khối nào.
 
 II. YÊU CẦU VĂN PHONG THUYẾT MINH:
 - Viết tiếng Việt chuẩn mực, tự nhiên, giàu chiều sâu văn hóa như hướng dẫn viên chuyên nghiệp; ngắt câu bằng dấu chấm, dấu phẩy rõ ràng để đọc thành giọng nói mượt mà.
@@ -307,11 +307,18 @@ async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
     const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
 
+    const generationConfig = {
+      temperature: 0.15,
+      maxOutputTokens: 2048,
+      responseMimeType: "application/json"
+    };
+    if (model.includes("2.5-flash")) {
+      generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    }
+
     const res = await fetch(endpoint, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         contents: [
           {
@@ -322,18 +329,18 @@ async function callGeminiVision({ apiKey, model, prompt, imageBase64 }) {
             ]
           }
         ],
-        generationConfig: {
-          temperature: 0.15,
-          maxOutputTokens: 1000,
-          responseMimeType: "application/json"
-        }
+        generationConfig
       }),
       signal: controller.signal
     });
 
     const rawText = await res.text();
     if (!res.ok) {
-      const err = new Error(`Gemini(${model}): HTTP ${res.status}`);
+      let msg = rawText.slice(0, 140);
+      try {
+        msg = JSON.parse(rawText)?.error?.message || msg;
+      } catch (_) {}
+      const err = new Error(`Gemini(${model}) HTTP ${res.status}: ${msg}`);
       err.status = res.status;
       throw err;
     }
@@ -360,7 +367,7 @@ async function runGeminiVision({ apiKeys, prompt, imageBase64 }) {
       } catch (err) {
         errors.push(err.message || `Gemini(${model}): Failed`);
         if (err.status === 429) markKeyCooldown(apiKey);
-        if ([400, 401, 403, 429].includes(err.status)) continue;
+        if ([400, 401, 403, 404, 429].includes(err.status)) continue;
       }
     }
   }
@@ -384,15 +391,18 @@ Trả lời bằng tiếng Việt tự nhiên, chuyên nghiệp, chính xác, s�
     for (const apiKey of apiKeys) {
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const generationConfig = { temperature: 0.4, maxOutputTokens: 800 };
+        if (model.includes("2.5-flash")) {
+          generationConfig.thinkingConfig = { thinkingBudget: 0 };
+        }
+
         const res = await fetch(endpoint, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemPrompt }] },
             contents,
-            generationConfig: { temperature: 0.4, maxOutputTokens: 650 }
+            generationConfig
           })
         });
         if (res.status === 429) {
@@ -480,7 +490,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64 }) {
       body: JSON.stringify({
         model,
         temperature: 0.15,
-        max_tokens: 850,
+        max_tokens: 900,
         messages: [
           {
             role: "user",
@@ -924,7 +934,9 @@ module.exports = async (req, res) => {
             locationContext: body.locationContext
           });
           return res.status(200).json({ reply, provider: "gemini" });
-        } catch (_) {}
+        } catch (err) {
+          console.error("[Gemini Chat Fallback Reason]:", err.message);
+        }
       }
       if (groqKeys.length) {
         const reply = await handleGroqChat({
@@ -954,6 +966,7 @@ module.exports = async (req, res) => {
         visionOutput = await runGeminiVision({ apiKeys: geminiKeys, prompt, imageBase64 });
       } catch (err) {
         geminiError = err;
+        console.error("[Gemini Fallback Reason]:", err.message);
       }
     }
 
