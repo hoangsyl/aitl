@@ -75,14 +75,13 @@ function extractJson(rawText) {
   const start = cleaned.indexOf("{");
   const end = cleaned.lastIndexOf("}");
   if (start === -1 || end === -1 || end <= start) {
-    throw new Error("Không tìm thấy JSON trong phản hồi AI");
+    throw new Error("Phản hồi AI không phải JSON");
   }
 
   let jsonStr = cleaned.slice(start, end + 1);
   try {
     return JSON.parse(jsonStr);
   } catch (_) {
-    // Sửa lỗi xuống dòng thô hoặc dấu phẩy thừa nếu AI viết lệch chuẩn nhẹ
     jsonStr = jsonStr
       .replace(/,\s*([}\]])/g, "$1")
       .replace(/[\u0000-\u0019]+/g, " ");
@@ -97,12 +96,14 @@ async function fetchWorkingGroqModels(apiKey) {
   if (!res.ok) throw new Error(`Groq models HTTP ${res.status}`);
   const data = await res.json();
   const allIds = (data.data || []).map((m) => m.id).filter(Boolean);
-  return allIds.filter(
-    (id) => !/whisper|tts|guard|safeguard|embed|prompt-guard/i.test(id)
+  const activeModels = allIds.filter(
+    (id) => !/whisper|tts|guard|safeguard|embed|prompt-guard|playai|orpheus|compound/i.test(id)
   );
+  if (!activeModels.length) throw new Error("Không tìm thấy model khả dụng trên Groq");
+  return activeModels;
 }
 
-async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 8000 }) {
+async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 7000 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -148,51 +149,35 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
   }
 }
 
-async function runVisionWithFallback({ apiKey, prompt, imageBase64 }) {
-  const preferredVision = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct"
-  ];
+// Tự động lấy danh sách model đang sống từ Groq, ưu tiên model Vision và chạy song song lấy kết quả nhanh nhất
+async function runVisionDynamic({ apiKey, prompt, imageBase64 }) {
+  const liveModels = await fetchWorkingGroqModels(apiKey);
 
-  let candidates = [...preferredVision];
-  try {
-    const allModels = await fetchWorkingGroqModels(apiKey);
-    const dynamicVision = allModels.filter(
-      (m) => /llama-4|scout|maverick|vision|vl/i.test(m) && !candidates.includes(m)
-    );
-    candidates = [...candidates, ...dynamicVision];
-  } catch (_) {}
+  const visionPriority = liveModels.filter((m) =>
+    /vision|vl|scout|maverick|llama-4|llama-5|omni|multimodal|pixtral|kimi|gemma/i.test(m)
+  );
+  const others = liveModels.filter((m) => !visionPriority.includes(m));
+  const ordered = [...visionPriority, ...others];
 
+  const batchSize = 5;
   const errors = [];
 
-  // Chạy song song 2 model Vision mạnh nhất để nhận diện nhanh 2-3 giây
-  const firstBatch = candidates.slice(0, 2);
-  const settled = await Promise.allSettled(
-    firstBatch.map((model) =>
-      callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 8000 })
-    )
-  );
-
-  for (const item of settled) {
-    if (item.status === "fulfilled" && item.value && typeof item.value === "object") {
-      return item.value;
-    }
-    if (item.status === "rejected") {
-      errors.push(item.reason?.message || "Vision failed");
-    }
-  }
-
-  // Thử tiếp các model Vision khác nếu có
-  for (const model of candidates.slice(2, 4)) {
+  for (let i = 0; i < ordered.length; i += batchSize) {
+    const batch = ordered.slice(i, i + batchSize);
     try {
-      const res = await callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 7500 });
-      if (res && typeof res === "object") return res;
-    } catch (err) {
-      errors.push(err.message || "Vision failed");
+      const winner = await Promise.any(
+        batch.map((model) =>
+          callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs: 7000 })
+        )
+      );
+      if (winner && typeof winner === "object") return winner;
+    } catch (aggErr) {
+      const reasons = (aggErr?.errors || []).map((e) => e?.message).filter(Boolean);
+      errors.push(...reasons);
     }
   }
 
-  throw new Error(errors.join(" | ") || "Không gọi được model Vision");
+  throw new Error(errors.slice(0, 3).join(" | ") || "Không có model đọc ảnh nào phản hồi");
 }
 
 async function handleChatMode({ apiKey, messages, locationContext }) {
@@ -236,7 +221,7 @@ Hãy trả lời ngắn gọn, rõ ràng, thực tế bằng tiếng Việt.`;
 }
 
 // ==========================================
-// GIỌNG ĐỌC MP3 TÍCH HỢP SẴN (HOÀI MY NEURAL + DỰ PHÒNG MP3 TỰ ĐỘNG)
+// GIỌNG ĐỌC MP3 TÍCH HỢP SẴN (HOÀI MY NEURAL + DỰ PHÒNG MP3)
 // ==========================================
 function cleanTtsText(rawText) {
   return String(rawText || "")
@@ -508,13 +493,11 @@ async function generateVoiceBase64(rawText) {
   const cleanText = cleanTtsText(rawText);
   if (!cleanText) return null;
 
-  // Ưu tiên 1: Giọng Hoài My Neural
   try {
     const hoaiMy = await generateHoaiMyBase64(cleanText);
     if (hoaiMy) return hoaiMy;
   } catch (_) {}
 
-  // Ưu tiên 2: Luồng MP3 dự phòng nếu Microsoft chặn IP Vercel -> đảm bảo 100% luôn phát được
   return await generateBackupMp3Base64(cleanText);
 }
 
@@ -621,7 +604,7 @@ CHỈ TRẢ VỀ DUY NHẤT JSON THUẦN (không viết thêm chữ nào bên ng
   }
 }`;
 
-    const result = await runVisionWithFallback({
+    const result = await runVisionDynamic({
       apiKey: groqKey,
       prompt,
       imageBase64
