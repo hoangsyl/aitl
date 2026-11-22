@@ -19,11 +19,11 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
 
-// Trạng thái xác nhận xóa tất cả (2 chạm thay cho confirm() để không đơ camera iOS)
+// Xác nhận xóa lịch sử 2 chạm (không dùng confirm() làm đơ camera trên iPhone)
 let confirmClearArmed = false;
 let confirmClearTimer = null;
 
-// Web Audio API + Bộ nhớ đệm tải trước giọng Hoài My
+// Web Audio API + Bộ nhớ đệm tải trước giọng đọc
 let audioCtx = null;
 let activeSource = null;
 const ttsBufferCache = new Map();
@@ -35,6 +35,13 @@ let chatHistory = [
       "Chào bạn! Mình là trợ lý AIvolution. Bạn cần hỏi đường, quán ngon Đà Nẵng – Hội An, hay thắc mắc về sản phẩm vừa quét cứ nhắn mình nhé!"
   }
 ];
+
+function escapeHtml(str) {
+  return String(str || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
 
 // ==========================================
 // 1. QUẢN LÝ LỊCH SỬ (localStorage)
@@ -160,8 +167,8 @@ function renderHistoryTab() {
               : `<div class="history-thumb" style="display:flex;align-items:center;justify-content:center;font-size:22px;">📷</div>`
           }
           <div class="history-info">
-            <div class="history-name">${item.data.ten_dia_diem || "Kết quả nhận diện"}</div>
-            <div class="history-sub">${item.data.loai_doi_tuong || ""} • ${item.time}</div>
+            <div class="history-name">${escapeHtml(item.data.ten_dia_diem || "Kết quả nhận diện")}</div>
+            <div class="history-sub">${escapeHtml(item.data.loai_doi_tuong || "")} • ${item.time}</div>
           </div>
           <button class="btn-del-item" title="Xóa" onclick="deleteHistoryItem(event, ${item.id})">🗑️</button>
         </div>
@@ -256,7 +263,7 @@ async function renderWeatherTab() {
       </div>
     `;
   } catch (err) {
-    body.innerHTML = `<div class="error-box">Không lấy được dữ liệu thời tiết: ${err.message}</div>`;
+    body.innerHTML = `<div class="error-box">Không lấy được dữ liệu thời tiết: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -268,7 +275,7 @@ function renderChatTab() {
   body.innerHTML = `
     <div id="chatBox" class="chat-box">
       ${chatHistory
-        .map((m) => `<div class="chat-msg ${m.role === "user" ? "user" : "bot"}">${m.content}</div>`)
+        .map((m) => `<div class="chat-msg ${m.role === "user" ? "user" : "bot"}">${escapeHtml(m.content)}</div>`)
         .join("")}
     </div>
     <form id="chatForm" class="chat-form">
@@ -340,7 +347,6 @@ function deleteHistoryItem(event, id) {
 function clearAllHistory() {
   const btn = document.querySelector(".btn-clear-all");
 
-  // Lần bấm 1: đổi chữ nút để xác nhận (không dùng confirm() làm đơ camera)
   if (!confirmClearArmed) {
     confirmClearArmed = true;
     if (btn) {
@@ -360,7 +366,6 @@ function clearAllHistory() {
     return;
   }
 
-  // Lần bấm 2: thực hiện xóa ngay và giữ camera chạy mượt
   resetClearConfirm();
   saveHistoryList([]);
   renderHistoryTab();
@@ -373,7 +378,7 @@ window.deleteHistoryItem = deleteHistoryItem;
 window.clearAllHistory = clearAllHistory;
 
 // ==========================================
-// 5. CAMERA, GPS & GIỌNG HOÀI MY (BẤM 1 LẦN NGHE NGAY)
+// 5. CAMERA, GPS & GIỌNG ĐỌC MP3 (BẤM 1 LẦN NGHE NGAY)
 // ==========================================
 async function startCamera() {
   if (currentStream) currentStream.getTracks().forEach((t) => t.stop());
@@ -384,8 +389,8 @@ async function startCamera() {
     });
     video.srcObject = currentStream;
     video.play().catch(() => {});
-  } catch (err) {
-    alert("Không mở được camera. Bạn có thể bấm nút 🖼️ để chọn ảnh từ máy.");
+  } catch (_) {
+    gpsText.textContent = "Bấm 🖼️ để chọn ảnh";
   }
 }
 
@@ -455,7 +460,7 @@ function getOrFetchTtsBuffer(cleanText) {
       if (res.ok && data.audioBase64) {
         return base64ToArrayBuffer(data.audioBase64);
       }
-      throw new Error(data.ttsError || "Không tải được giọng Hoài My");
+      throw new Error(data.ttsError || "Không tải được âm thanh");
     })
     .catch((err) => {
       ttsBufferCache.delete(cleanText);
@@ -476,6 +481,7 @@ function prefetchTts(text) {
   getOrFetchTtsBuffer(cleanText).catch(() => {});
 }
 
+// Mở khóa loa iPhone ngay lập tức bằng 1 sample câm trong sự kiện chạm đầu tiên
 function unlockAudioContext() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
@@ -483,6 +489,13 @@ function unlockAudioContext() {
   if (audioCtx.state === "suspended") {
     audioCtx.resume().catch(() => {});
   }
+  try {
+    const silentBuffer = audioCtx.createBuffer(1, 1, 22050);
+    const silentSource = audioCtx.createBufferSource();
+    silentSource.buffer = silentBuffer;
+    silentSource.connect(audioCtx.destination);
+    silentSource.start(0);
+  } catch (_) {}
   return audioCtx;
 }
 
@@ -521,16 +534,13 @@ async function speakText(text) {
   if (!cleanText) return;
 
   const ctx = unlockAudioContext();
-  if (!ctx) {
-    alert("Trình duyệt không hỗ trợ phát âm thanh.");
-    return;
-  }
+  if (!ctx) return;
 
   const session = ++speechSessionId;
   isSpeaking = true;
 
   const btn = document.getElementById("speakBtn");
-  if (btn) btn.textContent = "⏳ Đang tải giọng Hoài My...";
+  if (btn) btn.textContent = "⏳ Đang chuẩn bị giọng đọc...";
 
   try {
     const arrayBuffer = await getOrFetchTtsBuffer(cleanText);
@@ -559,11 +569,11 @@ async function speakText(text) {
     };
 
     source.start(0);
-  } catch (err) {
+  } catch (_) {
     if (session === speechSessionId) {
       stopSpeaking();
       if (btn) {
-        btn.textContent = "⚠️ Lỗi tải giọng, bấm thử lại";
+        btn.textContent = "⚠️ Mạng chậm, bấm thử lại";
         setTimeout(() => {
           if (!isSpeaking) updateSpeakButton(false);
         }, 2500);
@@ -610,26 +620,30 @@ async function scanBase64(imageBase64, thumbDataUrl) {
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
 
     if (!res.ok || data.error) {
-      renderError();
+      renderError(data.debug || "");
     } else {
       addToHistory(data, thumbDataUrl);
       renderResult(data, `${elapsed}s`, false);
     }
-  } catch (_) {
-    renderError();
+  } catch (err) {
+    renderError(err?.message || "Lỗi kết nối mạng");
   } finally {
     statusPill.classList.remove("show");
   }
 }
 
-function renderError() {
+function renderError(debugMsg = "") {
+  const debugHtml = debugMsg
+    ? `<div style="font-size:11px;color:#8c7a70;margin-top:8px;word-break:break-word;">Chi tiết: ${escapeHtml(debugMsg)}</div>`
+    : "";
+
   sheetContent.innerHTML = `
     <div class="sheet-header">
       <div class="badges"><span class="badge-type">THỬ LẠI</span></div>
       <button class="btn-close" onclick="closeSheet()">✕</button>
     </div>
     <h2 class="title">Chưa nhận diện được</h2>
-    <div class="error-box">${FRIENDLY_ERROR_MSG}</div>
+    <div class="error-box">${FRIENDLY_ERROR_MSG}${debugHtml}</div>
     <div class="action-row" style="margin-top: 14px;">
       <button class="btn-primary" onclick="closeSheet()">🔄 Quét lại ngay</button>
     </div>
@@ -640,7 +654,7 @@ function renderError() {
 function renderResult(data, timeOrElapsed, fromHistory = false) {
   currentSpeechText = `${data.ten_dia_diem || ""}. ${data.cau_chuyen_lich_su || ""} ${data.giai_thoai_dac_biet || ""}`;
 
-  // Tải trước giọng Hoài My ngay lúc bảng kết quả vừa mở
+  // Tải ngầm giọng đọc ngay khi kết quả vừa hiện -> bấm 1 phát là nghe luôn
   prefetchTts(currentSpeechText);
 
   const sp = data.thong_tin_san_pham;
@@ -719,12 +733,12 @@ function renderResult(data, timeOrElapsed, fromHistory = false) {
 // ==========================================
 document.getElementById("captureBtn").addEventListener("click", () => {
   if (!video.videoWidth) return;
-  const maxW = 900;
+  const maxW = 800;
   const scale = Math.min(1, maxW / video.videoWidth);
   canvas.width = video.videoWidth * scale;
   canvas.height = video.videoHeight * scale;
   canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
-  const base64 = canvas.toDataURL("image/jpeg", 0.78).split(",")[1];
+  const base64 = canvas.toDataURL("image/jpeg", 0.72).split(",")[1];
   const thumb = makeThumbnail(canvas);
   scanBase64(base64, thumb);
 });
@@ -747,12 +761,12 @@ document.getElementById("fileInput").addEventListener("change", (e) => {
   reader.onload = () => {
     const img = new Image();
     img.onload = () => {
-      const maxW = 900;
+      const maxW = 800;
       const scale = Math.min(1, maxW / img.width);
       canvas.width = img.width * scale;
       canvas.height = img.height * scale;
       canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-      const base64 = canvas.toDataURL("image/jpeg", 0.8).split(",")[1];
+      const base64 = canvas.toDataURL("image/jpeg", 0.75).split(",")[1];
       const thumb = makeThumbnail(canvas);
       scanBase64(base64, thumb);
     };
