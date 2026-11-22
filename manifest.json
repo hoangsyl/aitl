@@ -1,6 +1,8 @@
 {
+  "id": "/",
   "name": "AIvolution — Quét AI Đà Nẵng – Hội An",
   "short_name": "AIvolution",
+  "description": "Ứng dụng nhận diện địa điểm, món ăn và sản phẩm bằng AI tại Đà Nẵng – Hội An",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#030303",
