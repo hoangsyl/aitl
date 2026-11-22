@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (NHANH + CHỐNG CẮT JSON)
+// 1. CẤU HÌNH HỆ THỐNG (GROQ CHÍNH – NHANH & ỔN ĐỊNH)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -277,7 +277,7 @@ QUY TẮC BẮT BUỘC:
 2. Calo: chỉ tính cho món ăn/đồ uống theo bao bì hoặc định lượng thực tế (VD: "420 - 480 kcal"). Đồ vật không ăn được BẮT BUỘC ghi "Không áp dụng".
 3. Giá VNĐ: ghi đúng giá trên tem (nếu có) hoặc khoảng giá bán lẻ thực tế tại Việt Nam (VD: "35.000 - 50.000 VNĐ").
 4. Ẩm thực: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
-5. Viết ngắn gọn 1–2 câu mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ:
+5. Viết ngắn gọn 1–2 câu mỗi mục để phản hồi nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ (không viết thêm bất kỳ chữ nào ngoài JSON):
 
 {
   "khong_nhan_dien_duoc": false,
@@ -311,7 +311,7 @@ QUY TẮC BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1: GROQ LPU (GỌI THẲNG SCOUT – JSON CHUẨN 100%)
+// 5. TẦNG 1: GROQ LPU (GỌI THẲNG SCOUT – KHÔNG LỖI 400)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -383,7 +383,6 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs = 
         model,
         temperature: 0.1,
         max_tokens: 850,
-        response_format: { type: "json_object" },
         messages: [
           {
             role: "user",
