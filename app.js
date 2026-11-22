@@ -1,6 +1,5 @@
 const HISTORY_KEY = "aivolution_scan_history_v1";
 const MAX_HISTORY = 30;
-const DAILY_CALORIE_GOAL = 2000;
 const FRIENDLY_ERROR_MSG =
   "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ hoặc mờ hoặc tối quá, bạn hãy giữ nguyên và để rõ giúp mình nhé.";
 
@@ -75,7 +74,6 @@ function navigateTo(viewName) {
     el.hidden = key !== viewName;
   });
 
-  // Ẩn bottom nav khi đang ở Scanner hoặc Detail
   bottomNav.hidden = viewName === "scanner" || viewName === "detail";
 
   document.querySelectorAll(".bottom-nav .nav-btn").forEach((btn) => {
@@ -197,12 +195,16 @@ function renderHomeDashboard() {
     }
   });
 
-  document.getElementById("totalCaloriesVal").textContent = totalCalories.toLocaleString("vi-VN");
-  document.getElementById("totalScansSub").textContent = `${list.length} mục đã nhận diện`;
+  document.getElementById("totalScansVal").textContent = list.length.toLocaleString("vi-VN");
+  document.getElementById("totalScansSub").textContent =
+    totalCalories > 0
+      ? `Đã lưu ${list.length}/${MAX_HISTORY} mục • ${totalCalories.toLocaleString("vi-VN")} kcal`
+      : `Đã lưu ${list.length}/${MAX_HISTORY} mục`;
 
   const circumference = 226.2;
-  const ratio = Math.min(1, totalCalories > 0 ? totalCalories / DAILY_CALORIE_GOAL : list.length / 10);
-  const offset = circumference * (1 - Math.max(0.08, ratio));
+  const milestone = list.length <= 10 ? 10 : MAX_HISTORY;
+  const ratio = Math.min(1, list.length / milestone);
+  const offset = circumference * (1 - (list.length === 0 ? 0.08 : Math.max(0.12, ratio)));
   document.getElementById("heroRingProgress").setAttribute("stroke-dashoffset", offset.toFixed(1));
 
   const maxCat = Math.max(1, placesCount, foodCount, productCount);
