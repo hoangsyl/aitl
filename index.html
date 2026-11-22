@@ -2,54 +2,63 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <title>AIvolution — Nhận diện đa năng </title>
-  <link rel="stylesheet" href="style.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>AIvolution • Nhận diện đa năng </title>
+  <link rel="stylesheet" href="style.css?v=13" />
 </head>
 <body>
-  <div class="camera-wrap">
+  <div class="app">
     <video id="camera" autoplay playsinline muted></video>
     <canvas id="canvas" style="display: none;"></canvas>
 
-    <div class="top-bar">
+    <!-- Thanh trên cùng -->
+    <header class="top-bar">
       <div class="brand">
-        <h1>AIvolution</h1>
-        <p>🔍Nhận diện đa năng 🔍</p>
+        <div class="brand-name">AIvolution</div>
+        <div class="brand-sub">🔍 Nhận diện đa năng</div>
       </div>
-      <div class="gps-badge">
-        <span id="gpsDot" class="dot"></span>
-        <span id="gpsText">Đang định vị...</span>
+      <div class="gps-pill">
+        <span id="gpsDot" class="gps-dot"></span>
+        <span id="gpsText">Đà Nẵng – Hội An</span>
       </div>
+    </header>
+
+    <!-- Khung ngắm camera -->
+    <div class="viewfinder" aria-hidden="true">
+      <span class="corner tl"></span>
+      <span class="corner tr"></span>
+      <span class="corner bl"></span>
+      <span class="corner br"></span>
     </div>
 
-    <div class="reticle">
-      <span class="tl"></span>
-      <span class="tr"></span>
-      <span class="bl"></span>
-      <span class="br"></span>
-    </div>
+    <!-- Thông báo đang quét -->
+    <div id="statusPill" class="status-pill">⏳ Đang phân tích AI...</div>
 
-    <div id="statusPill" class="status-pill">⚡ Đang phân tích nhanh vui lòng chờ...</div>
+    <!-- Thanh nút điều khiển dưới cùng -->
+    <footer class="bottom-bar">
+      <button id="uploadBtn" class="icon-btn" title="Chọn ảnh từ máy" aria-label="Chọn ảnh">🖼️</button>
+      <input id="fileInput" type="file" accept="image/*" style="display: none;" />
 
-    <div class="controls">
-      <button class="btn-icon" id="uploadBtn" title="Chọn ảnh từ máy">🖼️</button>
-      <button class="btn-capture" id="captureBtn" title="Chụp & Quét"></button>
-      <button class="btn-icon" id="switchBtn" title="Đổi camera">🔄</button>
-      <input type="file" id="fileInput" accept="image/*" style="display: none;" />
-    </div>
+      <button id="captureBtn" class="shutter-btn" title="Chụp & Nhận diện" aria-label="Chụp ảnh">
+        <span class="shutter-inner"></span>
+      </button>
 
-    <!-- Nút Menu ở góc dưới bên phải -->
-    <button class="btn-menu" id="menuBtn" title="Menu: Lịch sử, Thời tiết, Chatbot">
-      ☰
-      <span id="historyBadge" class="history-badge" style="display: none;">0</span>
-    </button>
+      <div class="right-controls">
+        <button id="switchBtn" class="icon-btn" title="Đổi camera" aria-label="Đổi camera">🔄</button>
+        <button id="menuBtn" class="icon-btn menu-btn" title="Menu" aria-label="Mở menu">
+          ☰
+          <span id="historyBadge" class="badge-count" style="display: none;">0</span>
+        </button>
+      </div>
+    </footer>
+
+    <!-- Bảng trượt kết quả & Menu -->
+    <section id="sheet" class="sheet" aria-live="polite">
+      <div class="sheet-handle"></div>
+      <div id="sheetContent" class="sheet-content"></div>
+    </section>
   </div>
 
-  <div id="sheet" class="sheet">
-    <div class="sheet-handle"></div>
-    <div id="sheetContent"></div>
-  </div>
-
-  <script src="app.js?v=12"></script>
+  <script src="app.js?v=13"></script>
 </body>
 </html>
