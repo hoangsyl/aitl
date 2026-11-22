@@ -41,9 +41,12 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
 
-// Web Audio API + Bộ đệm tải sẵn giọng Hoài My
+// Web Audio API + Fallback Audio + Bộ đệm tải sẵn giọng Hoài My
 let audioCtx = null;
 let activeSource = null;
+let activeHtmlAudio = null;
+let activeAudioUrl = null;
+let audioNeedsReset = false;
 const ttsBufferCache = new Map();
 
 let chatHistory = [
@@ -186,7 +189,6 @@ function saveHistoryList(list) {
   try {
     localStorage.setItem(HISTORY_KEY, JSON.stringify(list));
   } catch (_) {
-    // Nếu bộ nhớ trình duyệt gần đầy, giữ ảnh thumbnail cho 20 mục gần nhất để vẫn lưu được hàng nghìn lượt quét
     const slim = list.map((item, idx) => (idx >= 20 ? { ...item, thumb: "" } : item));
     try {
       localStorage.setItem(HISTORY_KEY, JSON.stringify(slim));
@@ -271,7 +273,6 @@ function renderHomeDashboard() {
       ? `Không giới hạn • ${totalCalories.toLocaleString("vi-VN")} kcal`
       : `Không giới hạn • Đã lưu ${list.length.toLocaleString("vi-VN")} mục`;
 
-  // Vòng tiến độ mượt theo mốc 10 / 100 / 1000 / 10000 lượt
   const circumference = 226.2;
   const milestone = totalScans <= 10 ? 10 : totalScans <= 100 ? 100 : totalScans <= 1000 ? 1000 : 10000;
   const ratio = totalScans === 0 ? 0.08 : Math.min(1, Math.max(0.12, (totalScans % milestone || milestone) / milestone));
@@ -302,7 +303,6 @@ function renderHomeDashboard() {
     return;
   }
 
-  // Hiển thị 100 mục gần nhất trên danh sách để cuộn mượt (vẫn lưu đầy đủ trong bộ nhớ)
   const visibleList = list.slice(0, 100);
 
   container.innerHTML = `
@@ -431,11 +431,22 @@ function stopCamera() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && activeView === "scanner") {
-    const track = currentStream?.getVideoTracks?.()[0];
-    if (!track || track.readyState === "ended") startCamera();
-    else if (video && video.paused) video.play().catch(() => {});
+  if (document.hidden) {
+    // Ngắt và đánh dấu làm mới AudioContext để tránh bị iOS/Android treo giọng khi quay lại tab
+    stopSpeaking();
+    resetAudioContext();
+  } else {
+    if (activeView === "scanner") {
+      const track = currentStream?.getVideoTracks?.()[0];
+      if (!track || track.readyState === "ended") startCamera();
+      else if (video && video.paused) video.play().catch(() => {});
+    }
   }
+});
+
+window.addEventListener("pagehide", () => {
+  stopSpeaking();
+  resetAudioContext();
 });
 
 function initGPS() {
@@ -583,7 +594,7 @@ document.getElementById("chatForm").addEventListener("submit", async (e) => {
 });
 
 // ==========================================
-// 5. GIỌNG ĐỌC HOÀI MY NEURAL (1 CHẠM NGHE NGAY)
+// 5. GIỌNG ĐỌC HOÀI MY NEURAL (CHỐNG TREO KHI THOÁT TAB)
 // ==========================================
 function normalizeTtsText(text) {
   return String(text || "").replace(/[*#_•]/g, " ").replace(/\s+/g, " ").trim();
@@ -627,11 +638,39 @@ function prefetchTts(text) {
   if (cleanText) getOrFetchTtsBuffer(cleanText).catch(() => {});
 }
 
+function resetAudioContext() {
+  audioNeedsReset = true;
+  if (audioCtx) {
+    const oldCtx = audioCtx;
+    audioCtx = null;
+    try {
+      if (oldCtx.state !== "closed") oldCtx.close().catch(() => {});
+    } catch (_) {}
+  }
+}
+
 function unlockAudioContext() {
   const AudioCtx = window.AudioContext || window.webkitAudioContext;
   if (!AudioCtx) return null;
-  if (!audioCtx) audioCtx = new AudioCtx();
-  if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+
+  // Nếu vừa thoát tab quay lại hoặc bị iOS đẩy vào trạng thái interrupted/closed -> tạo mới hoàn toàn
+  if (
+    !audioCtx ||
+    audioNeedsReset ||
+    audioCtx.state === "closed" ||
+    audioCtx.state === "interrupted"
+  ) {
+    if (audioCtx && audioCtx.state !== "closed") {
+      try { audioCtx.close().catch(() => {}); } catch (_) {}
+    }
+    audioCtx = new AudioCtx();
+    audioNeedsReset = false;
+  }
+
+  if (audioCtx.state !== "running") {
+    audioCtx.resume().catch(() => {});
+  }
+
   try {
     const silent = audioCtx.createBuffer(1, 1, 22050);
     const src = audioCtx.createBufferSource();
@@ -639,12 +678,41 @@ function unlockAudioContext() {
     src.connect(audioCtx.destination);
     src.start(0);
   } catch (_) {}
+
   return audioCtx;
 }
 
 function decodeAudio(ctx, arrayBuffer) {
   return new Promise((resolve, reject) => {
     ctx.decodeAudioData(arrayBuffer.slice(0), resolve, reject);
+  });
+}
+
+function playViaHtmlAudio(buffer, session) {
+  return new Promise((resolve, reject) => {
+    try {
+      const blob = new Blob([buffer], { type: "audio/mpeg" });
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url);
+      audio.playsInline = true;
+      activeHtmlAudio = audio;
+      activeAudioUrl = url;
+
+      audio.onended = () => {
+        if (session === speechSessionId) {
+          stopSpeaking();
+        }
+      };
+      audio.onerror = () => {
+        if (session === speechSessionId) stopSpeaking();
+        reject(new Error("Audio playback failed"));
+      };
+
+      updateSpeakButton(true);
+      audio.play().then(resolve).catch(reject);
+    } catch (err) {
+      reject(err);
+    }
   });
 }
 
@@ -664,6 +732,19 @@ function stopSpeaking() {
     } catch (_) {}
     activeSource = null;
   }
+  if (activeHtmlAudio) {
+    try {
+      activeHtmlAudio.onended = null;
+      activeHtmlAudio.onerror = null;
+      activeHtmlAudio.pause();
+      activeHtmlAudio.src = "";
+    } catch (_) {}
+    activeHtmlAudio = null;
+  }
+  if (activeAudioUrl) {
+    try { URL.revokeObjectURL(activeAudioUrl); } catch (_) {}
+    activeAudioUrl = null;
+  }
   updateSpeakButton(false);
 }
 
@@ -676,8 +757,6 @@ async function speakText(text) {
   if (!cleanText) return;
 
   const ctx = unlockAudioContext();
-  if (!ctx) return;
-
   const session = ++speechSessionId;
   isSpeaking = true;
   const btn = document.getElementById("speakBtn");
@@ -686,27 +765,39 @@ async function speakText(text) {
   try {
     const buffer = await getOrFetchTtsBuffer(cleanText);
     if (session !== speechSessionId) return;
-    const decoded = await decodeAudio(ctx, buffer);
-    if (session !== speechSessionId) return;
-    if (ctx.state === "suspended") await ctx.resume();
 
-    const source = ctx.createBufferSource();
-    source.buffer = decoded;
-    source.connect(ctx.destination);
-    activeSource = source;
-
-    updateSpeakButton(true);
-    source.onended = () => {
-      if (session === speechSessionId) {
-        activeSource = null;
-        isSpeaking = false;
-        updateSpeakButton(false);
+    if (ctx) {
+      if (ctx.state !== "running") {
+        await ctx.resume().catch(() => {});
       }
-    };
-    source.start(0);
+      if (ctx.state === "running") {
+        const decoded = await decodeAudio(ctx, buffer);
+        if (session !== speechSessionId) return;
+
+        const source = ctx.createBufferSource();
+        source.buffer = decoded;
+        source.connect(ctx.destination);
+        activeSource = source;
+
+        updateSpeakButton(true);
+        source.onended = () => {
+          if (session === speechSessionId) {
+            activeSource = null;
+            isSpeaking = false;
+            updateSpeakButton(false);
+          }
+        };
+        source.start(0);
+        return;
+      }
+    }
+
+    // Dự phòng bằng HTML Audio nếu AudioContext không chạy được sau khi quay lại tab
+    await playViaHtmlAudio(buffer, session);
   } catch (_) {
     if (session === speechSessionId) {
       stopSpeaking();
+      resetAudioContext();
       if (btn) {
         btn.textContent = "Thử nghe lại";
         setTimeout(() => {
