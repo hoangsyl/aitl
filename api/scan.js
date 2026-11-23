@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - 100 Concurrent Users & Zero-Hallucination Engine
+ * AIvolution Team - Autonomous AI Vision + Auto-Verify Google + 100 Concurrent Users
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -11,12 +11,11 @@ const crypto = require("crypto");
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GROQ_VISION_PRIORITY: [],
   GEMINI_BACKUP_MODELS: ["gemini-3.8-flash", "gemini-3.5-flash-lite"],
-  TOTAL_SCAN_BUDGET_MS: 8200,   // Khóa trần toàn bộ request < 8.2s để không bao giờ bị Vercel 504
+  TOTAL_SCAN_BUDGET_MS: 8200,   // Trần tổng thời gian xử lý < 8.2s để không bao giờ bị Vercel 504
   GROQ_ATTEMPT_TIMEOUT_MS: 4200,
   GROQ_MODELS_TIMEOUT_MS: 1800,
-  SERPER_TIMEOUT_MS: 1000,
+  SERPER_TIMEOUT_MS: 1200,
   GEMINI_BACKUP_TIMEOUT_MS: 4200,
   CHAT_TIMEOUT_MS: 4800,
   TTS_TIMEOUT_MS: 4200,
@@ -36,273 +35,15 @@ const runtimeState = {
   badGroqVisionModels: new Set(),
   badGeminiModels: new Set(),
   keyCooldownUntil: new Map(),
-  rrIndex: Object.create(null), // Round-robin chia tải đều cho 100 người
-  inFlight: new Map(),          // Single-flight: gộp các request trùng đang chạy
-  scanCache: new Map(),         // Cache kết quả quét (15 phút)
-  serperCache: new Map(),       // Cache Google Search/Giá (60 phút)
+  rrIndex: Object.create(null), // Round-robin chia đều tải cho 100 người dùng
+  inFlight: new Map(),          // Single-flight: gộp request trùng đang chạy
+  scanCache: new Map(),         // Cache kết quả quét ảnh (15 phút)
+  serperCache: new Map(),       // Cache dữ liệu xác thực Google & giá (60 phút)
   ttsCache: new Map()           // Cache giọng đọc MP3 (30 phút)
 };
 
 // ==========================================
-// 2. KHO DỮ LIỆU XÁC THỰC 100% HỘI AN (TRƯỜNG HỌC, THƯƠNG HIỆU, DI TÍCH)
-// ==========================================
-const HOI_AN_VERIFIED_DB = [
-  // --- TRƯỜNG HỌC TẠI HỘI AN ---
-  {
-    keywords: ["tran quy cap", "thpt tran quy cap", "tranquycaphoian"],
-    data: {
-      loai_doi_tuong: "Trường học & Tổ chức",
-      la_dia_diem: true,
-      ten_dia_diem: "Trường THPT Trần Quý Cáp (Hội An)",
-      dia_chi: "07 Trần Hưng Đạo, Hội An",
-      nien_dai_hoac_gia: "Thành lập 15/09/1952",
-      cau_chuyen_lich_su:
-        "Trường THPT Trần Quý Cáp là ngôi trường trung học lâu đời và giàu truyền thống hiếu học tại Hội An. Trường thành lập ngày 15/09/1952 và đặt tại cơ sở số 07 Trần Hưng Đạo từ năm 1955.",
-      noi_mua_goi_y: "Trung tâm phố cổ Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Ngôi trường có bề dày lịch sử hơn 70 năm với nhiều thế hệ học sinh tiêu biểu tại Hội An.",
-        review_mau: ["Khuôn viên xanh mát ngay trục đường Trần Hưng Đạo", "Truyền thống học tập và hoạt động phong trào nổi bật"]
-      }
-    }
-  },
-  {
-    keywords: ["chuyen le thanh tong", "thpt chuyen le thanh tong", "le thanh tong hoi an"],
-    data: {
-      loai_doi_tuong: "Trường học & Tổ chức",
-      la_dia_diem: true,
-      ten_dia_diem: "Trường THPT Chuyên Lê Thánh Tông (Hội An)",
-      dia_chi: "236 Trường Chinh, Hội An",
-      nien_dai_hoac_gia: "Thành lập năm 2012",
-      cau_chuyen_lich_su:
-        "Trường THPT Chuyên Lê Thánh Tông là trường trung học phổ thông chuyên trọng điểm tại Hội An, đào tạo học sinh năng khiếu các môn văn hóa với nhiều giải học sinh giỏi cấp quốc gia.",
-      noi_mua_goi_y: "Khu vực đường Trường Chinh, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Cơ sở vật chất hiện đại, chất lượng đào tạo mũi nhọn hàng đầu khu vực.",
-        review_mau: ["Thành tích học sinh giỏi cấp quốc gia nổi bật", "Nhiều CLB học thuật và ngoại khóa năng động"]
-      }
-    }
-  },
-  {
-    keywords: ["nguyen trai hoi an", "thpt nguyen trai hoi an", "58 nguyen cong tru"],
-    requireHoiAnOrExact: true,
-    softKeywords: ["thpt nguyen trai"],
-    data: {
-      loai_doi_tuong: "Trường học & Tổ chức",
-      la_dia_diem: true,
-      ten_dia_diem: "Trường THPT Nguyễn Trãi – Hội An",
-      dia_chi: "58 Nguyễn Công Trứ, Hội An",
-      nien_dai_hoac_gia: "Thành lập 27/07/1999",
-      cau_chuyen_lich_su:
-        "Trường THPT Nguyễn Trãi (Hội An) thành lập ngày 27/07/1999, là trường công lập uy tín đào tạo nhiều thế hệ học sinh khu vực Tân An và lân cận.",
-      noi_mua_goi_y: "Đường Nguyễn Công Trứ, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Môi trường học tập thân thiện, chất lượng giảng dạy ổn định.",
-        review_mau: ["Khuôn viên khang trang, rộng rãi", "Phong trào Đoàn và hoạt động ngoại khóa sôi nổi"]
-      }
-    }
-  },
-  {
-    keywords: ["thpt tran hung dao hoi an", "170 cua dai", "tran hung dao cua dai"],
-    requireHoiAnOrExact: true,
-    softKeywords: ["thpt tran hung dao"],
-    data: {
-      loai_doi_tuong: "Trường học & Tổ chức",
-      la_dia_diem: true,
-      ten_dia_diem: "Trường THPT Trần Hưng Đạo (Hội An)",
-      dia_chi: "170 Cửa Đại, Hội An",
-      nien_dai_hoac_gia: "Thành lập năm 2009",
-      cau_chuyen_lich_su:
-        "Trường THPT Trần Hưng Đạo (Hội An) thành lập năm 2009, tọa lạc trên trục đường Cửa Đại, phục vụ giáo dục bậc THPT cho khu vực phía Đông Hội An.",
-      noi_mua_goi_y: "Đường Cửa Đại, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Ngôi trường trẻ năng động, vị trí thuận lợi trên tuyến đường ra biển Cửa Đại.",
-        review_mau: ["Môi trường giáo dục gần gũi", "Nhiều hoạt động trải nghiệm gắn với địa phương"]
-      }
-    }
-  },
-  {
-    keywords: ["ptdtnt thpt quang nam", "pho thong dan toc noi tru quang nam", "39 nguyen tat thanh"],
-    data: {
-      loai_doi_tuong: "Trường học & Tổ chức",
-      la_dia_diem: true,
-      ten_dia_diem: "Trường PTDTNT THPT Quảng Nam (Hội An)",
-      dia_chi: "39 Nguyễn Tất Thành, Hội An",
-      nien_dai_hoac_gia: "Thành lập năm 1985",
-      cau_chuyen_lich_su:
-        "Trường Phổ thông Dân tộc Nội trú THPT Quảng Nam đặt tại Hội An từ năm 1985, đào tạo nguồn nhân lực trẻ cho con em đồng bào các dân tộc thiểu số.",
-      noi_mua_goi_y: "Đường Nguyễn Tất Thành, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Môi trường nội trú giàu bản sắc văn hóa và tinh thần đoàn kết.",
-        review_mau: ["Không gian giao lưu văn hóa đặc sắc", "Chế độ chăm lo học sinh nội trú chu đáo"]
-      }
-    }
-  },
-
-  // --- THƯƠNG HIỆU & ẨM THỰC ĐẶC TRƯNG HỘI AN ---
-  {
-    keywords: ["mot hoi an", "nuoc mot", "tra thao moc mot", "150 tran phu"],
-    data: {
-      loai_doi_tuong: "Thức ăn & Đồ uống",
-      la_dia_diem: true,
-      ten_dia_diem: "Nước Mót Hội An (Trà thảo mộc sả chanh)",
-      dia_chi: "150 Trần Phú, Phố cổ Hội An",
-      nien_dai_hoac_gia: "16.000 - 30.000 VNĐ",
-      calo_uoc_tinh: "60 - 95 kcal/ly",
-      cau_chuyen_lich_su:
-        "Mót Hội An là thương hiệu trà thảo mộc giải nhiệt nổi tiếng trên đường Trần Phú, pha từ sả, chanh, gừng, cam thảo, táo tàu, quế và trang trí cánh hoa sen.",
-      noi_mua_goi_y: "150 Trần Phú, Phố cổ Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Thức uống giải nhiệt đặc trưng của phố cổ Hội An, thơm mùi thảo mộc dịu nhẹ.",
-        review_mau: ["Vị thanh mát, ít ngọt, hợp đi bộ phố cổ", "Cốc trang trí cánh sen rất đặc trưng"]
-      }
-    }
-  },
-  {
-    keywords: ["banh mi phuong", "banh my phuong", "2b phan chu trinh", "2b phan chau trinh"],
-    data: {
-      loai_doi_tuong: "Nhà hàng & Quán ăn",
-      la_dia_diem: true,
-      ten_dia_diem: "Bánh Mì Phượng Hội An",
-      dia_chi: "2B Phan Chu Trinh, Hội An",
-      nien_dai_hoac_gia: "25.000 - 45.000 VNĐ",
-      calo_uoc_tinh: "450 - 580 kcal/ổ",
-      cau_chuyen_lich_su:
-        "Bánh Mì Phượng là thương hiệu bánh mì nổi tiếng tại Hội An với lớp vỏ giòn, nước xốt gia truyền và nhiều loại nhân như xá xíu, pate, thịt nướng, rau thơm.",
-      noi_mua_goi_y: "2B Phan Chu Trinh, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Hương vị đậm đà, vỏ bánh giòn và nước xốt đặc trưng.",
-        review_mau: ["Nhiều lựa chọn nhân phong phú", "Giờ cao điểm thường phải xếp hàng"]
-      }
-    }
-  },
-  {
-    keywords: ["madam khanh", "madame khanh", "banh mi queen", "banh mi ba khanh", "115 tran cao van"],
-    data: {
-      loai_doi_tuong: "Nhà hàng & Quán ăn",
-      la_dia_diem: true,
-      ten_dia_diem: "Bánh Mì Madam Khánh (The Bánh Mì Queen)",
-      dia_chi: "115 Trần Cao Vân, Hội An",
-      nien_dai_hoac_gia: "25.000 - 40.000 VNĐ",
-      calo_uoc_tinh: "430 - 540 kcal/ổ",
-      cau_chuyen_lich_su:
-        "Bánh Mì Madam Khánh được du khách gọi là 'Nữ hoàng Bánh mì Hội An', nổi bật với phần nhân hài hòa gồm thịt xá xíu, pate, trứng, nộm đu đủ và xốt đặc trưng.",
-      noi_mua_goi_y: "115 Trần Cao Vân, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Vị bánh cân bằng, bánh nướng nóng giòn, phục vụ thân thiện.",
-        review_mau: ["Nhân đầy đặn nhưng không bị ngấy", "Có bàn ngồi lại sạch sẽ tại quán"]
-      }
-    }
-  },
-  {
-    keywords: ["com ga ba buoi", "ba buoi", "22 phan chu trinh"],
-    data: {
-      loai_doi_tuong: "Nhà hàng & Quán ăn",
-      la_dia_diem: true,
-      ten_dia_diem: "Cơm Gà Bà Buội Hội An",
-      dia_chi: "22 Phan Chu Trinh, Hội An",
-      nien_dai_hoac_gia: "35.000 - 55.000 VNĐ",
-      calo_uoc_tinh: "520 - 650 kcal/đĩa",
-      cau_chuyen_lich_su:
-        "Cơm Gà Bà Buội là thương hiệu ẩm thực gia truyền tại Hội An từ thập niên 1950, nổi tiếng với cơm nấu nước luộc gà vàng tơi, gà ta xé phay trộn hành tây và rau răm Trà Quế.",
-      noi_mua_goi_y: "22 Phan Chu Trinh, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Hương vị cơm gà phố cổ truyền thống, hạt cơm tơi thơm và thịt gà dai ngọt.",
-        review_mau: ["Tương ớt Hội An và đu đủ bào ăn kèm rất hợp", "Nên đi sớm vì buổi trưa rất đông"]
-      }
-    }
-  },
-  {
-    keywords: ["cao lau thanh", "26 thai phien"],
-    data: {
-      loai_doi_tuong: "Nhà hàng & Quán ăn",
-      la_dia_diem: true,
-      ten_dia_diem: "Cao Lầu Thanh Hội An",
-      dia_chi: "26 Thái Phiên, Hội An",
-      nien_dai_hoac_gia: "30.000 - 45.000 VNĐ",
-      calo_uoc_tinh: "460 - 560 kcal/tô",
-      cau_chuyen_lich_su:
-        "Cao Lầu Thanh là quán ăn bản địa nổi tiếng tại Hội An, phục vụ sợi mì cao lầu dai giòn ăn kèm thịt xá xíu mềm, ram chiên giòn và rau sống Trà Quế.",
-      noi_mua_goi_y: "26 Thái Phiên, Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Quán địa phương chuẩn vị, giá bình dân và phục vụ nhanh.",
-        review_mau: ["Thịt xá xíu thấm vị, sợi mì đúng chuẩn", "Đông khách địa phương ăn sáng và trưa"]
-      }
-    }
-  },
-  {
-    keywords: ["faifo coffee", "ca phe faifo", "130 tran phu"],
-    data: {
-      loai_doi_tuong: "Nhà hàng & Quán ăn",
-      la_dia_diem: true,
-      ten_dia_diem: "Faifo Coffee Hội An",
-      dia_chi: "130 Trần Phú, Phố cổ Hội An",
-      nien_dai_hoac_gia: "45.000 - 85.000 VNĐ",
-      cau_chuyen_lich_su:
-        "Faifo Coffee tọa lạc trong ngôi nhà cổ hai tầng trên đường Trần Phú, nổi tiếng với sân thượng nhìn trọn mái ngói âm dương phố cổ Hội An.",
-      noi_mua_goi_y: "130 Trần Phú, Phố cổ Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Điểm cà phê sân thượng nổi tiếng để ngắm toàn cảnh phố cổ từ trên cao.",
-        review_mau: ["Góc chụp hoàng hôn trên sân thượng đẹp", "Cà phê rang xay đậm vị"]
-      }
-    }
-  },
-  {
-    keywords: ["reaching out", "reaching out tea", "131 tran phu"],
-    data: {
-      loai_doi_tuong: "Nhà hàng & Quán ăn",
-      la_dia_diem: true,
-      ten_dia_diem: "Reaching Out Tea House Hội An",
-      dia_chi: "131 Trần Phú, Phố cổ Hội An",
-      nien_dai_hoac_gia: "60.000 - 150.000 VNĐ",
-      cau_chuyen_lich_su:
-        "Reaching Out Tea House thành lập năm 2000, là quán trà yên tĩnh do các nhân viên khiếm thính vận hành; khách gọi món bằng thẻ gỗ khắc chữ trong không gian nhà cổ.",
-      noi_mua_goi_y: "131 Trần Phú, Phố cổ Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Không gian thưởng trà tĩnh lặng và nhân văn giữa lòng phố cổ.",
-        review_mau: ["Trà Việt và bánh mứt thủ công chất lượng", "Trải nghiệm giao tiếp bằng thẻ gỗ ý nghĩa"]
-      }
-    }
-  },
-
-  // --- DI TÍCH BIỂU TƯỢNG ---
-  {
-    keywords: ["chua cau", "lai vien kieu", "cau nhat ban"],
-    data: {
-      loai_doi_tuong: "Di tích",
-      la_dia_diem: true,
-      ten_dia_diem: "Chùa Cầu (Lai Viễn Kiều – Hội An)",
-      dia_chi: "Giao điểm Trần Phú – Nguyễn Thị Minh Khai, Phố cổ Hội An",
-      nien_dai_hoac_gia: "Đầu thế kỷ 17 (khoảng 1593)",
-      cau_chuyen_lich_su:
-        "Chùa Cầu là biểu tượng kiến trúc của Hội An, do thương nhân Nhật Bản dựng đầu thế kỷ 17 và được chúa Nguyễn Phúc Chu đặt tên 'Lai Viễn Kiều' năm 1719; hình ảnh công trình in trên tờ 20.000 VNĐ.",
-      noi_mua_goi_y: "Trung tâm Phố cổ Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Di tích kiến trúc biểu tượng giao thoa văn hóa Nhật – Việt – Hoa.",
-        review_mau: ["Rực rỡ ánh đèn vào buổi tối", "Nên tham quan sáng sớm để tránh đông"]
-      }
-    }
-  },
-  {
-    keywords: ["hoi quan phuc kien", "phuc kien hoi quan", "46 tran phu"],
-    data: {
-      loai_doi_tuong: "Di tích",
-      la_dia_diem: true,
-      ten_dia_diem: "Hội quán Phúc Kiến (Hội An)",
-      dia_chi: "46 Trần Phú, Phố cổ Hội An",
-      nien_dai_hoac_gia: "Cuối thế kỷ 17 (khoảng 1690)",
-      cau_chuyen_lich_su:
-        "Hội quán Phúc Kiến là hội quán lớn bậc nhất tại phố cổ Hội An, thờ Thiên Hậu Thánh Mẫu, nổi tiếng với cổng tam quan mái ngói lưu ly và nhiều hiện vật Hán – Nôm cổ.",
-      noi_mua_goi_y: "46 Trần Phú, Phố cổ Hội An",
-      danh_gia_ban_dia: {
-        tom_tat: "Kiến trúc chạm khắc tinh xảo, điểm tham quan trọng yếu trên đường Trần Phú.",
-        review_mau: ["Cổng tam quan và vòng nhang lớn rất ấn tượng", "Lưu giữ nhiều hoành phi cổ giá trị"]
-      }
-    }
-  }
-];
-
-// ==========================================
-// 3. CACHE 3 TẦNG, SINGLE-FLIGHT & ROUND-ROBIN 30 KEYS
+// 2. CACHE 3 TẦNG, SINGLE-FLIGHT & ROUND-ROBIN 30 KEYS
 // ==========================================
 function getCache(map, key) {
   const entry = map.get(key);
@@ -322,7 +63,6 @@ function setCache(map, key, val, ttlMs, maxEntries = 100) {
   map.set(key, { val, exp: Date.now() + ttlMs });
 }
 
-// Gộp các request giống hệt nhau đang chạy cùng lúc thành 1 lần gọi API duy nhất
 function runSingleFlight(key, fn) {
   if (runtimeState.inFlight.has(key)) {
     return runtimeState.inFlight.get(key);
@@ -366,7 +106,6 @@ function collectApiKeys(prefix) {
   const ready = unique.filter((k) => (runtimeState.keyCooldownUntil.get(k) || 0) <= now);
   const cooling = unique.filter((k) => (runtimeState.keyCooldownUntil.get(k) || 0) > now);
 
-  // Round-robin thực sự: mỗi người dùng lấy key kế tiếp -> không bao giờ dồn tải vào Key #1
   if (ready.length > 1) {
     const idx = (runtimeState.rrIndex[prefix] || 0) % ready.length;
     runtimeState.rrIndex[prefix] = idx + 1;
@@ -386,7 +125,7 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 4200) {
 }
 
 // ==========================================
-// 4. ĐỊA LÝ, ĐỐI CHIẾU XÁC THỰC & CHUẨN HÓA (KHÔNG BỊA)
+// 3. TIỆN ÍCH ĐỊA LÝ & CHUẨN HÓA DỮ LIỆU
 // ==========================================
 function clampToDaNangHoiAn(lat, lng, locationContext = "") {
   const numLat = Number(lat);
@@ -410,11 +149,18 @@ function clampToDaNangHoiAn(lat, lng, locationContext = "") {
   return { lat: 16.0544, lng: 108.2022 };
 }
 
+function detectLocalCityName(areaPoint, locationContext = "") {
+  const ctx = normalizeTextForMatch(locationContext);
+  if (ctx.includes("hoi an")) return "Hội An";
+  if (areaPoint && Number(areaPoint.lat) < 15.96) return "Hội An";
+  return "Đà Nẵng";
+}
+
 function buildDnHaMapsUrl({ query = "", lat, lng, locationContext = "" } = {}) {
   const point = clampToDaNangHoiAn(lat, lng, locationContext);
   const cleanQuery = String(query || "").trim();
   const scopedQuery = cleanQuery
-    ? (/đà nẵng|hội an/i.test(cleanQuery) ? cleanQuery : `${cleanQuery}, Hội An - Đà Nẵng`)
+    ? (/đà nẵng|hội an|quảng nam|việt nam/i.test(cleanQuery) ? cleanQuery : `${cleanQuery}, Hội An - Đà Nẵng`)
     : "Hội An - Đà Nẵng";
 
   const params = new URLSearchParams({
@@ -430,7 +176,7 @@ function buildDnHaDirectionsUrl({ destName = "", lat, lng, locationContext = "" 
   const origin = clampToDaNangHoiAn(lat, lng, locationContext);
   const cleanDest = String(destName || "").trim();
   const scopedDest = cleanDest
-    ? (/đà nẵng|hội an/i.test(cleanDest) ? cleanDest : `${cleanDest}, Hội An - Đà Nẵng`)
+    ? (/đà nẵng|hội an|quảng nam|việt nam/i.test(cleanDest) ? cleanDest : `${cleanDest}, Hội An - Đà Nẵng`)
     : "Hội An, Đà Nẵng";
 
   const params = new URLSearchParams({
@@ -442,23 +188,35 @@ function buildDnHaDirectionsUrl({ destName = "", lat, lng, locationContext = "" 
   return `https://www.google.com/maps/dir/?${params.toString()}`;
 }
 
-function matchVerifiedHoiAnEntity(ten, ocrText, locationContext) {
-  const combined = normalizeTextForMatch(`${ten || ""} ${ocrText || ""}`);
-  if (!combined) return null;
-
-  const isHoiAnContext = /hoi an|quang nam/i.test(normalizeTextForMatch(`${locationContext || ""} ${ocrText || ""}`));
-
-  for (const item of HOI_AN_VERIFIED_DB) {
-    if (item.keywords.some((kw) => combined.includes(kw))) {
-      return item.data;
-    }
-    if (item.requireHoiAnOrExact && isHoiAnContext && Array.isArray(item.softKeywords)) {
-      if (item.softKeywords.some((kw) => combined.includes(kw))) {
-        return item.data;
-      }
-    }
+function attachMapLinks(payload, { areaPoint, locationContext }) {
+  if (payload.la_dia_diem) {
+    const hasExactAddr = payload.dia_chi && !/không áp dụng|chưa xác định/i.test(payload.dia_chi);
+    const placeQuery = hasExactAddr ? `${payload.ten_dia_diem}, ${payload.dia_chi}` : payload.ten_dia_diem;
+    payload.hien_chi_duong = true;
+    payload.google_maps_url = buildDnHaMapsUrl({
+      query: placeQuery,
+      lat: areaPoint.lat,
+      lng: areaPoint.lng,
+      locationContext
+    });
+    payload.chi_duong_url = buildDnHaDirectionsUrl({
+      destName: placeQuery,
+      lat: areaPoint.lat,
+      lng: areaPoint.lng,
+      locationContext
+    });
+  } else {
+    const buyQuery = payload.thong_tin_san_pham?.tu_khoa_mua_hang || `mua ${payload.ten_dia_diem}`;
+    payload.hien_chi_duong = false;
+    payload.google_maps_url = buildDnHaMapsUrl({
+      query: buyQuery,
+      lat: areaPoint.lat,
+      lng: areaPoint.lng,
+      locationContext
+    });
+    payload.chi_duong_url = "";
   }
-  return null;
+  return payload;
 }
 
 function extractJson(rawText) {
@@ -509,23 +267,23 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
   if (!ten || /^(không áp dụng|chưa xác định|n\/a|none|null)$/i.test(ten)) {
     const chiTiet = String(sp.chi_tiet_san_pham || data.cau_chuyen_lich_su || "").trim();
     ten = ocrText && !/không có chữ/i.test(ocrText)
-      ? ocrText.slice(0, 60)
-      : (chiTiet ? chiTiet.split(/[.,(]/)[0].trim().slice(0, 60) : "Đối tượng nhận diện");
+      ? ocrText.slice(0, 65)
+      : (chiTiet ? chiTiet.split(/[.,(]/)[0].trim().slice(0, 65) : "Đối tượng nhận diện");
   }
 
-  const verified = matchVerifiedHoiAnEntity(ten, ocrText, locationContext);
+  const loai = String(data.loai_doi_tuong || "Vật thể").trim();
+  const isPlace =
+    data.la_dia_diem === true ||
+    /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm|địa điểm|trường học|tổ chức|thương hiệu/i.test(loai);
 
-  const loai = verified?.loai_doi_tuong || String(data.loai_doi_tuong || "Vật thể").trim();
-  const isPlace = verified
-    ? Boolean(verified.la_dia_diem)
-    : (data.la_dia_diem === true || /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm|địa điểm|trường học|tổ chức/i.test(loai));
+  const diaChi = String(
+    data.dia_chi || (isPlace ? "Chưa xác định rõ địa chỉ từ ảnh" : "Không áp dụng")
+  ).trim();
 
-  const finalTen = verified?.ten_dia_diem || ten;
-  const diaChi = verified?.dia_chi || String(data.dia_chi || (isPlace ? "Chưa xác định rõ địa chỉ từ ảnh" : "Không áp dụng")).trim();
-  const nienDaiGia = verified?.nien_dai_hoac_gia || String(data.nien_dai_hoac_gia || "Chưa xác định rõ từ ảnh").trim();
+  const nienDaiGia = String(data.nien_dai_hoac_gia || "Chưa xác định rõ từ ảnh").trim();
 
   const isFoodOrDrink = /thức ăn|đồ uống|món ăn|nước uống|thực phẩm|bánh|trái cây/i.test(loai);
-  const rawCalo = verified?.calo_uoc_tinh || String(sp.calo_uoc_tinh || "").trim();
+  const rawCalo = String(sp.calo_uoc_tinh || "").trim();
   const safeCalo = !isFoodOrDrink
     ? "Không áp dụng"
     : (/chưa đủ dữ liệu|chưa xác định/i.test(rawCalo)
@@ -535,19 +293,19 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
   const normalized = {
     loai_doi_tuong: loai,
     la_dia_diem: isPlace,
-    ten_dia_diem: finalTen,
+    ten_dia_diem: ten,
     dia_chi: diaChi,
     nien_dai_hoac_gia: nienDaiGia,
-    cau_chuyen_lich_su: verified?.cau_chuyen_lich_su || String(data.cau_chuyen_lich_su || "").trim(),
+    cau_chuyen_lich_su: String(data.cau_chuyen_lich_su || "").trim(),
     giai_thoai_dac_biet: String(data.giai_thoai_dac_biet || "").trim(),
     thong_tin_san_pham: {
-      hien_thi: typeof sp.hien_thi === "boolean" ? sp.hien_thi : !isPlace,
+      hien_thi: typeof sp.hien_thi === "boolean" ? sp.hien_thi : true,
       calo_uoc_tinh: safeCalo,
       tot_cho_suc_khoe: isFoodOrDrink
         ? String(sp.tot_cho_suc_khoe || "Chưa đủ dữ liệu đánh giá từ ảnh").trim()
         : String(sp.tot_cho_suc_khoe || "Không áp dụng").trim(),
       chi_tiet_san_pham: String(sp.chi_tiet_san_pham || "Nhận diện từ đặc điểm nhìn thấy trong ảnh").trim(),
-      noi_mua_goi_y: verified?.noi_mua_goi_y || String(sp.noi_mua_goi_y || "Các cửa hàng hoặc địa điểm liên quan").trim(),
+      noi_mua_goi_y: String(sp.noi_mua_goi_y || "Đà Nẵng – Hội An").trim(),
       tu_khoa_mua_hang: String(sp.tu_khoa_mua_hang || "").trim()
     },
     han_viet: {
@@ -557,7 +315,7 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
       phan_tich_tung_tu: Array.isArray(hv.phan_tich_tung_tu) ? hv.phan_tich_tung_tu : [],
       y_nghia_tong_the: String(hv.y_nghia_tong_the || "").trim()
     },
-    danh_gia_ban_dia: verified?.danh_gia_ban_dia || {
+    danh_gia_ban_dia: {
       tom_tat: String(dg.tom_tat || "Nhận xét thực tế dựa trên đặc điểm nhìn thấy trong ảnh.").trim(),
       review_mau: Array.isArray(dg.review_mau)
         ? dg.review_mau.map((r) => String(r || "").trim()).filter(Boolean).slice(0, 2)
@@ -569,79 +327,54 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
       khu_vuc: "Đà Nẵng – Hội An"
     },
     _ocr: ocrText,
-    _verified: Boolean(verified),
+    _verified: false,
     _provider: provider
   };
 
-  if (isPlace) {
-    const hasExactAddr = diaChi && !/không áp dụng|chưa xác định/i.test(diaChi);
-    const placeQuery = hasExactAddr ? `${finalTen}, ${diaChi}` : finalTen;
-    normalized.hien_chi_duong = true;
-    normalized.google_maps_url = buildDnHaMapsUrl({
-      query: placeQuery,
-      lat: areaPoint.lat,
-      lng: areaPoint.lng,
-      locationContext
-    });
-    normalized.chi_duong_url = buildDnHaDirectionsUrl({
-      destName: placeQuery,
-      lat: areaPoint.lat,
-      lng: areaPoint.lng,
-      locationContext
-    });
-  } else {
-    const buyQuery = normalized.thong_tin_san_pham.tu_khoa_mua_hang || `mua ${finalTen}`;
-    normalized.hien_chi_duong = false;
-    normalized.google_maps_url = buildDnHaMapsUrl({
-      query: buyQuery,
-      lat: areaPoint.lat,
-      lng: areaPoint.lng,
-      locationContext
-    });
-    normalized.chi_duong_url = "";
-  }
-
-  return normalized;
+  return attachMapLinks(normalized, { areaPoint, locationContext });
 }
 
 // ==========================================
-// 5. PROMPT CHUẨN XÁC TUYỆT ĐỐI – KHÔNG BỊA THÔNG TIN / KHÔNG BỊA CALO
+// 4. PROMPT AI TỰ QUÉT MỌI LOGO TRƯỜNG, THƯƠNG HIỆU, DI TÍCH & CALO CHUẨN 100%
 // ==========================================
 function buildVisionPrompt(locationContext) {
-  return `Hệ thống Computer Vision & OCR chuẩn xác tuyệt đối của AIvolution. Ngữ cảnh: ${locationContext || "Hội An – Đà Nẵng"}.
+  return `Bạn là hệ thống Computer Vision & OCR tự động độ chính xác tối đa của ứng dụng AIvolution.
+Ngữ cảnh vị trí hiện tại: ${locationContext || "Hội An – Đà Nẵng"}.
 
-NGUYÊN TẮC BẮT BUỘC (TUYỆT ĐỐI KHÔNG BỊA ĐẶT):
-1. ĐỌC CHỮ TRƯỚC (OCR): Chép nguyên văn mọi chữ, tên trường học, năm trên logo, tên thương hiệu, dung tích (ml/g), bảng dinh dưỡng hoặc chữ Hán – Nôm nhìn thấy rõ vào "chu_doc_duoc_tren_anh". Không thấy chữ ghi "Không có chữ".
-2. KHÔNG ĐOÁN MÒ:
-   - Nếu không đọc rõ chữ/logo thương hiệu -> KHÔNG tự bịa tên hãng, chỉ mô tả đúng vật thể thực tế.
-   - Nếu không biết chắc 100% địa chỉ hoặc năm thành lập -> ghi "Chưa xác định rõ từ ảnh", TUYỆT ĐỐI không tự chế địa chỉ hay năm.
-   - Logo trường học / phù hiệu / đồng phục -> đặt "loai_doi_tuong": "Trường học & Tổ chức", "la_dia_diem": true, ghi đúng tên trường đọc được.
-   - KHÔNG gượng ép gắn vật dụng cá nhân (chai nước, tai nghe, bình lắc...) vào Hội An – Đà Nẵng.
-3. LUẬT ĐONG ĐẾM CALO (KHÔNG BỊA SỐ):
-   - Có nhãn dinh dưỡng hoặc sản phẩm đóng gói đọc rõ tên + dung tích (VD: lon nước, hộp sữa): ghi đúng kcal theo nhãn/nhà sản xuất (VD: "0 kcal/lon 355ml", "140 kcal/lon 330ml").
-   - Món ăn tươi thấy rõ từng thành phần trên đĩa/tô: tính cộng dồn theo chuẩn Viện Dinh Dưỡng Việt Nam và ghi rõ cách tính vào "chi_tiet_san_pham" (VD: "150g cơm ~195 kcal + 100g gà ~165 kcal"), xuất tổng khoảng hẹp vào "calo_uoc_tinh".
-   - Món đựng trong hộp kín/bị che khuất không thấy khẩu phần: BẮT BUỘC ghi "Chưa đủ dữ liệu trên ảnh".
+QUY TRÌNH BẮT BUỘC (TUYỆT ĐỐI KHÔNG BỊA ĐẶT):
+1. ĐỌC CHỮ & BIỂU TƯỢNG TRƯỚC (OCR-FIRST):
+   - Quét thật kỹ từng chữ in trên phù hiệu/logo trường học (tên trường, bậc học Tiểu học/THCS/THPT/ĐH, năm thành lập in trên logo, địa phương), biển hiệu quán/thương hiệu tại Hội An – Đà Nẵng, bao bì sản phẩm, dung tích (ml/g), bảng dinh dưỡng hoặc chữ Hán – Nôm.
+   - Chép nguyên văn chính xác vào "chu_doc_duoc_tren_anh". Nếu không có chữ ghi "Không có chữ".
+2. TỰ NHẬN DIỆN ĐA ĐỐI TƯỢNG – KHÔNG ĐOÁN MÒ:
+   - Logo / phù hiệu / đồng phục / bảng tên trường học hoặc cơ quan: đặt "loai_doi_tuong": "Trường học & Tổ chức", "la_dia_diem": true, ghi đúng tên đầy đủ của trường (kèm địa phương nếu có trên logo hoặc thuộc khu vực Hội An – Đà Nẵng).
+   - Logo / ly / túi / biển hiệu thương hiệu, quán cà phê, tiệm bánh, nhà hàng, di tích: đặt "la_dia_diem": true và nêu chính xác tên thương hiệu/địa điểm.
+   - Nếu KHÔNG biết chắc 100% địa chỉ hoặc năm thành lập -> BẮT BUỘC ghi "Chưa xác định rõ từ ảnh" (hệ thống Google phía sau sẽ tự tra và điền thay bạn, TUYỆT ĐỐI KHÔNG tự bịa địa chỉ hay năm thành lập).
+   - KHÔNG gượng ép gắn đồ vật cá nhân bình thường (bình nước, chuột, tai nghe...) vào Hội An – Đà Nẵng.
+3. LUẬT ĐONG ĐẾM CALO (TUYỆT ĐỐI KHÔNG BỊA):
+   - Sản phẩm có bảng Nutrition Facts hoặc đồ uống/thực phẩm đóng gói đọc rõ tên + dung tích: ghi đúng kcal theo nhãn/nhà sản xuất (VD: "0 kcal/lon 355ml", "140 kcal/lon 330ml").
+   - Món ăn tươi thấy rõ từng thành phần: cộng dồn định lượng theo chuẩn Viện Dinh Dưỡng Việt Nam và ghi rõ công thức cộng vào "chi_tiet_san_pham" (VD: "150g cơm ~195 kcal + 100g gà ~165 kcal"), xuất tổng khoảng hẹp vào "calo_uoc_tinh".
+   - Món ăn bị che khuất hoặc trong hộp kín không thấy nhân: BẮT BUỘC ghi "Chưa đủ dữ liệu trên ảnh".
    - Logo trường học, di tích, đồ vật không ăn được: BẮT BUỘC ghi "Không áp dụng".
-4. ĐẶC SẢN MIỀN TRUNG: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, ram giòn, KHÔNG đậu phộng); Mì Quảng (sợi dẹt bản to, CÓ đậu phộng, bánh tráng mè).
-5. TỐC ĐỘ: Viết ngắn gọn, súc tích đúng 1–2 câu chuẩn xác cho mỗi mục để phản hồi cực nhanh. CHỈ TRẢ VỀ JSON HỢP LỆ:
+4. ĐẶC SẢN MIỀN TRUNG: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, ram giòn, KHÔNG đậu phộng); Mì Quảng (sợi dẹt to, CÓ đậu phộng, bánh tráng mè).
+5. TỐC ĐỘ: Viết ngắn gọn, súc tích đúng 1–2 câu chuẩn xác mỗi mục. CHỈ TRẢ VỀ JSON HỢP LỆ:
 
 {
   "khong_nhan_dien_duoc": false,
-  "chu_doc_duoc_tren_anh": "Nguyên văn chữ/thương hiệu/tên trường/dung tích đọc được",
+  "chu_doc_duoc_tren_anh": "Chép nguyên văn mọi chữ/logo/tên trường/năm/dung tích nhìn thấy trong ảnh",
   "loai_doi_tuong": "Trường học & Tổ chức | Thương hiệu | Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": false,
-  "ten_dia_diem": "Tên chính xác nhất của trường học, thương hiệu, sản phẩm, món ăn hoặc địa điểm. KHÔNG ghi 'Không áp dụng'.",
-  "dia_chi": "Địa chỉ thật nếu biết chắc 100%, ngược lại ghi 'Không áp dụng' hoặc 'Chưa xác định rõ từ ảnh'",
-  "nien_dai_hoac_gia": "Năm thành lập thật (nếu là trường/di tích) hoặc khoảng giá bán lẻ VNĐ thực tế tại Việt Nam; không rõ ghi 'Chưa xác định rõ từ ảnh'",
-  "cau_chuyen_lich_su": "1-2 câu chính xác, đã kiểm chứng về bản chất, công dụng hoặc lịch sử.",
-  "giai_thoai_dac_biet": "1-2 câu mô tả chi tiết thực tế nhìn thấy trong ảnh (màu sắc, biểu tượng, chất liệu, bố cục).",
+  "ten_dia_diem": "Tên đầy đủ, chính xác nhất của trường học, thương hiệu, địa điểm, món ăn hoặc sản phẩm. KHÔNG ghi 'Không áp dụng'.",
+  "dia_chi": "Chỉ ghi địa chỉ nếu chắc chắn 100%, nếu không chắc ghi 'Chưa xác định rõ từ ảnh'; đồ vật ghi 'Không áp dụng'",
+  "nien_dai_hoac_gia": "Năm thành lập thật (chỉ ghi nếu in trên logo hoặc chắc chắn 100%) hoặc khoảng giá VNĐ thực tế; nếu chưa chắc ghi 'Chưa xác định rõ từ ảnh'",
+  "cau_chuyen_lich_su": "1-2 câu chính xác về bản chất, ý nghĩa, công dụng hoặc lịch sử đã biết rõ.",
+  "giai_thoai_dac_biet": "1-2 câu mô tả chi tiết thực tế nhìn thấy trực tiếp trên ảnh (biểu tượng logo, màu sắc, chất liệu, bố cục).",
   "thong_tin_san_pham": {
     "hien_thi": true,
-    "calo_uoc_tinh": "Số kcal chính xác theo nhãn/định lượng; đồ ăn bị che ghi 'Chưa đủ dữ liệu trên ảnh'; đồ vật/logo ghi 'Không áp dụng'",
-    "tot_cho_suc_khoe": "1 câu đánh giá thực tế về dinh dưỡng hoặc lưu ý an toàn (đồ vật/logo ghi 'Không áp dụng').",
-    "chi_tiet_san_pham": "Thành phần + định lượng calo (nếu là món ăn) hoặc chất liệu/dung tích nổi bật.",
+    "calo_uoc_tinh": "Số kcal chính xác theo nhãn/định lượng; che khuất ghi 'Chưa đủ dữ liệu trên ảnh'; đồ vật/logo ghi 'Không áp dụng'",
+    "tot_cho_suc_khoe": "1 câu đánh giá dinh dưỡng hoặc lưu ý thực tế (logo/đồ vật ghi 'Không áp dụng').",
+    "chi_tiet_san_pham": "Công thức tính calo từng phần (nếu là món ăn) hoặc đặc điểm nhận dạng/dung tích/chất liệu.",
     "noi_mua_goi_y": "Khu vực hoặc loại cửa hàng phổ biến.",
-    "tu_khoa_mua_hang": "Từ khóa tìm kiếm trên Google Maps"
+    "tu_khoa_mua_hang": "Từ khóa tìm kiếm chính xác trên Google Maps"
   },
   "han_viet": {
     "co_han_viet": false,
@@ -652,13 +385,13 @@ NGUYÊN TẮC BẮT BUỘC (TUYỆT ĐỐI KHÔNG BỊA ĐẶT):
   },
   "danh_gia_ban_dia": {
     "tom_tat": "1 câu nhận xét khách quan thực tế.",
-    "review_mau": ["Ưu điểm thực tế", "Lưu ý thực tế"]
+    "review_mau": ["Điểm nổi bật thực tế 1", "Lưu ý hữu ích 2"]
   }
 }`;
 }
 
 // ==========================================
-// 6. TẦNG 1: GROQ LPU (TỰ DÒ MODEL VISION SỐNG + SINGLE-FLIGHT)
+// 5. TẦNG 1: GROQ LPU (TỰ DÒ MODEL VISION SỐNG + SINGLE-FLIGHT)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -757,14 +490,17 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
 
 async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
   const errors = [];
-  // Thử tối đa 3 key luân phiên (đủ chịu tải, không bao giờ kẹt lâu)
+
   for (const apiKey of apiKeys.slice(0, 3)) {
     const remaining = deadline - Date.now();
     if (remaining < 1400) break;
 
     let liveModels = [];
     try {
-      liveModels = await fetchWorkingGroqModels(apiKey, Math.min(CONFIG.GROQ_MODELS_TIMEOUT_MS, remaining - 500));
+      liveModels = await fetchWorkingGroqModels(
+        apiKey,
+        Math.min(CONFIG.GROQ_MODELS_TIMEOUT_MS, remaining - 500)
+      );
     } catch (e) {
       errors.push(`GroqModels: ${e.message}`);
       continue;
@@ -802,7 +538,7 @@ async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
             apiKey,
             err.status === 429 ? CONFIG.KEY_COOLDOWN_429_MS : CONFIG.KEY_COOLDOWN_AUTH_MS
           );
-          break; // Nhảy ngay sang key khỏe tiếp theo
+          break;
         }
       }
     }
@@ -814,7 +550,7 @@ async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
 }
 
 // ==========================================
-// 7. TẦNG 2: GEMINI DỰ PHÒNG (CHUYỂN TỨC THÌ KHI GROQ BẬN)
+// 6. TẦNG 2: GEMINI DỰ PHÒNG
 // ==========================================
 async function runGeminiBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
   const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
@@ -884,7 +620,7 @@ async function runGeminiBackupVision({ apiKeys, prompt, imageBase64, deadline })
 }
 
 // ==========================================
-// 8. SERPER CÓ CACHE 60 PHÚT + SINGLE-FLIGHT (TRA GIÁ & XÁC THỰC ĐỊA CHỈ THẬT)
+// 7. TỰ ĐỘNG XÁC THỰC TRƯỜNG HỌC, THƯƠNG HIỆU, DI TÍCH & GIÁ BÁN QUA GOOGLE (SERPER + CACHE 60P)
 // ==========================================
 async function querySerperCached(query, num = 4, timeoutMs = CONFIG.SERPER_TIMEOUT_MS) {
   const normKey = `serper:${normalizeTextForMatch(query)}:${num}`;
@@ -927,15 +663,7 @@ async function querySerperCached(query, num = 4, timeoutMs = CONFIG.SERPER_TIMEO
   });
 }
 
-async function fetchRealPriceFromGoogle(productName, ocrHint = "", timeoutMs = CONFIG.SERPER_TIMEOUT_MS) {
-  const unitMatch = String(ocrHint || "").match(/\b\d+\s*(?:ml|g|kg|lít|l|viên|gói)\b/i);
-  const searchName = unitMatch && !productName.toLowerCase().includes(unitMatch[0].toLowerCase())
-    ? `${productName} ${unitMatch[0]}`
-    : productName;
-
-  const data = await querySerperCached(`giá bán ${searchName} chính hãng`, 5, timeoutMs);
-  if (!data) return null;
-
+function extractPriceRangeFromSerper(data) {
   const texts = [];
   if (data.answerBox?.snippet) texts.push(data.answerBox.snippet);
   (data.organic || []).forEach((item) => {
@@ -972,28 +700,125 @@ async function fetchRealPriceFromGoogle(productName, ocrHint = "", timeoutMs = C
   return minP === maxP ? `${fmt(minP)} VNĐ` : `${fmt(minP)} - ${fmt(maxP)} VNĐ`;
 }
 
-async function enrichLocalBrandOrSchool(payload, timeoutMs = CONFIG.SERPER_TIMEOUT_MS) {
-  if (payload._verified) return payload;
-  const isOrgOrBrand = /trường học|tổ chức|thương hiệu|nhà hàng|quán ăn|shop|di tích/i.test(payload.loai_doi_tuong);
-  if (!isOrgOrBrand || !payload.ten_dia_diem) return payload;
+async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeoutMs }) {
+  if (!payload || !payload.ten_dia_diem) return payload;
 
-  const data = await querySerperCached(`${payload.ten_dia_diem} Hội An Đà Nẵng địa chỉ`, 3, timeoutMs);
-  if (!data) return payload;
+  const isSchoolOrOrg = /trường học|tổ chức|di tích|hán nôm/i.test(payload.loai_doi_tuong);
+  const isPlaceOrBrand =
+    payload.la_dia_diem ||
+    /trường học|tổ chức|thương hiệu|nhà hàng|quán ăn|shop|workshop|di tích/i.test(payload.loai_doi_tuong);
 
-  const kg = data.knowledgeGraph || {};
-  const needsAddr = !payload.dia_chi || /không áp dụng|chưa xác định/i.test(payload.dia_chi);
-  if (needsAddr && kg.address) {
-    payload.dia_chi = kg.address;
-  } else if (needsAddr) {
-    const snippets = (data.organic || []).map((i) => `${i.title} ${i.snippet}`).join(" | ");
-    const addrMatch = snippets.match(/Địa chỉ[:\s]+([^.|;\n]{10,80})/i);
-    if (addrMatch) payload.dia_chi = addrMatch[1].trim();
+  // NHÁNH 1: TỰ ĐỘNG XÁC THỰC TRƯỜNG HỌC, THƯƠNG HIỆU, QUÁN ĂN, DI TÍCH
+  if (isPlaceOrBrand) {
+    const cityHint = detectLocalCityName(areaPoint, locationContext);
+    const hasRegionInName = /hội an|đà nẵng|quảng nam|hà nội|tp\.?hcm|hồ chí minh|huế/i.test(
+      `${payload.ten_dia_diem} ${payload._ocr || ""}`
+    );
+
+    const searchQuery = isSchoolOrOrg
+      ? `${payload.ten_dia_diem}${hasRegionInName ? "" : ` ${cityHint}`} địa chỉ năm thành lập`
+      : `${payload.ten_dia_diem}${hasRegionInName ? "" : ` ${cityHint}`} địa chỉ giá`;
+
+    const data = await querySerperCached(searchQuery, 4, timeoutMs);
+    if (!data) return payload;
+
+    let verifiedAny = false;
+    const kg = data.knowledgeGraph || {};
+    const attrs = kg.attributes && typeof kg.attributes === "object" ? kg.attributes : {};
+    const allSnippets = [
+      data.answerBox?.snippet || "",
+      kg.description || "",
+      ...(data.organic || []).map((i) => `${i.title || ""} - ${i.snippet || ""}`)
+    ].join(" | ");
+
+    // 1. Lấy địa chỉ thật từ Google Knowledge Graph hoặc snippet
+    const attrAddr = attrs["Địa chỉ"] || attrs["Address"] || kg.address || "";
+    if (attrAddr && attrAddr.length >= 6) {
+      payload.dia_chi = String(attrAddr).trim();
+      verifiedAny = true;
+    } else if (/chưa xác định|không áp dụng/i.test(payload.dia_chi)) {
+      const addrMatch = allSnippets.match(/Địa chỉ[:\s]+([^.|;\n]{8,95})/i);
+      if (addrMatch) {
+        payload.dia_chi = addrMatch[1].trim();
+        verifiedAny = true;
+      }
+    }
+
+    // 2. Lấy năm thành lập thật (cho trường học/di tích) hoặc giá thật (cho quán ăn/thương hiệu)
+    const foundedAttr = attrs["Thành lập"] || attrs["Năm thành lập"] || attrs["Founded"] || "";
+    if (isSchoolOrOrg) {
+      if (foundedAttr) {
+        payload.nien_dai_hoac_gia = `Thành lập ${String(foundedAttr).trim()}`;
+        verifiedAny = true;
+      } else if (/chưa xác định|tùy/i.test(payload.nien_dai_hoac_gia)) {
+        const yearMatch = allSnippets.match(
+          /thành lập(?:\s+vào)?(?:\s+ngày)?\s+(\d{1,2}[\/.-]\d{1,2}[\/.-](?:1\d{3}|20\d{2})|(?:năm\s+)?(?:1\d{3}|20\d{2}))/i
+        );
+        if (yearMatch) {
+          const cleanYear = yearMatch[1].replace(/^năm\s+/i, "").trim();
+          payload.nien_dai_hoac_gia = /^\d{4}$/.test(cleanYear)
+            ? `Thành lập năm ${cleanYear}`
+            : `Thành lập ${cleanYear}`;
+          verifiedAny = true;
+        }
+      }
+    } else {
+      const realPrice = extractPriceRangeFromSerper(data);
+      if (realPrice) {
+        payload.nien_dai_hoac_gia = realPrice;
+        verifiedAny = true;
+      }
+    }
+
+    // 3. Bổ sung giờ mở cửa / khu vực thực tế
+    const hoursAttr = attrs["Giờ"] || attrs["Giờ mở cửa"] || attrs["Hours"] || "";
+    if (hoursAttr && payload.thong_tin_san_pham) {
+      const baseLoc = !/chưa xác định|không áp dụng/i.test(payload.dia_chi)
+        ? payload.dia_chi
+        : payload.thong_tin_san_pham.noi_mua_goi_y;
+      payload.thong_tin_san_pham.noi_mua_goi_y = `${baseLoc} (${String(hoursAttr).trim()})`;
+      verifiedAny = true;
+    } else if (!/chưa xác định|không áp dụng/i.test(payload.dia_chi) && payload.thong_tin_san_pham) {
+      payload.thong_tin_san_pham.noi_mua_goi_y = payload.dia_chi;
+    }
+
+    // 4. Bổ sung điểm đánh giá Google thực tế (số sao & số lượt review)
+    if (kg.rating) {
+      const countText = kg.ratingCount ? ` (${Number(kg.ratingCount).toLocaleString("vi-VN")} lượt đánh giá)` : "";
+      payload.danh_gia_ban_dia.tom_tat = `Đánh giá thực tế trên Google: ${kg.rating}/5 ⭐${countText}. ${payload.danh_gia_ban_dia.tom_tat}`;
+      verifiedAny = true;
+    }
+
+    // 5. Nếu AI chưa có mô tả đầy đủ, bổ sung mô tả ngắn từ Google Knowledge Graph
+    if (kg.description && (!payload.cau_chuyen_lich_su || payload.cau_chuyen_lich_su.length < 40)) {
+      payload.cau_chuyen_lich_su = String(kg.description).trim();
+      verifiedAny = true;
+    }
+
+    payload._verified = verifiedAny;
+    // Cập nhật lại link Google Maps & Chỉ đường với địa chỉ chính xác vừa tra được
+    return attachMapLinks(payload, { areaPoint, locationContext });
+  }
+
+  // NHÁNH 2: TỰ ĐỘNG TRA GIÁ BÁN LẺ THẬT CHO SẢN PHẨM / VẬT THỂ
+  const unitMatch = String(payload._ocr || "").match(/\b\d+\s*(?:ml|g|kg|lít|l|viên|gói)\b/i);
+  const searchName = unitMatch && !payload.ten_dia_diem.toLowerCase().includes(unitMatch[0].toLowerCase())
+    ? `${payload.ten_dia_diem} ${unitMatch[0]}`
+    : payload.ten_dia_diem;
+
+  const data = await querySerperCached(`giá bán ${searchName} chính hãng`, 5, timeoutMs);
+  if (data) {
+    const realPrice = extractPriceRangeFromSerper(data);
+    if (realPrice) {
+      payload.nien_dai_hoac_gia = realPrice;
+      payload._verified = true;
+    }
   }
   return payload;
 }
 
 // ==========================================
-// 9. TRỢ LÝ AI THÔNG MINH (HIỂU MÓN VỪA QUÉT + DỮ LIỆU GOOGLE THẬT)
+// 8. TRỢ LÝ AI THÔNG MINH (HIỂU MÓN VỪA QUÉT + DỮ LIỆU GOOGLE THẬT)
 // ==========================================
 async function searchWebContextForChat(userText, lastScan) {
   if (!userText) return "";
@@ -1154,7 +979,7 @@ async function handleGeminiBackupChat({ apiKeys, messages, locationContext, last
 }
 
 // ==========================================
-// 10. GIỌNG ĐỌC MP3 CÓ CACHE + SINGLE-FLIGHT (HOÀI MY NEURAL + DỰ PHÒNG)
+// 9. GIỌNG ĐỌC MP3 CÓ CACHE + SINGLE-FLIGHT (HOÀI MY NEURAL + DỰ PHÒNG)
 // ==========================================
 function cleanTtsText(rawText) {
   return String(rawText || "")
@@ -1443,7 +1268,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 11. ENTRY POINT SERVERLESS HANDLER (CHỊU TẢI 100 USERS)
+// 10. ENTRY POINT SERVERLESS HANDLER (100 CONCURRENT USERS)
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1478,7 +1303,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // --- 2. CHẾ ĐỘ CHATBOT THÔNG MINH (Groq chính -> Gemini dự phòng) ---
+    // --- 2. CHẾ ĐỘ CHATBOT THÔNG MINH ---
     if (body.mode === "chat") {
       if (groqKeys.length) {
         try {
@@ -1505,7 +1330,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. CHẾ ĐỘ QUÉT ẢNH (SINGLE-FLIGHT + CACHE + DEADLINE 8.2s) ---
+    // --- 3. CHẾ ĐỘ QUÉT ẢNH TỰ ĐỘNG + TỰ XÁC THỰC GOOGLE ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1566,22 +1391,14 @@ module.exports = async (req, res) => {
 
       if (payload.error) return payload;
 
-      // Chỉ gọi Serper nếu vẫn còn đủ quỹ thời gian (>= 1.1s) để không bao giờ gây lag/504
+      // Tự động xác thực mọi trường học, thương hiệu, địa điểm hoặc giá sản phẩm qua Google
       const timeLeftForSerper = deadline - Date.now();
-      if (!payload._verified && timeLeftForSerper >= 1100) {
-        const serperTimeout = Math.min(CONFIG.SERPER_TIMEOUT_MS, timeLeftForSerper - 150);
-        if (payload.la_dia_diem) {
-          payload = await enrichLocalBrandOrSchool(payload, serperTimeout);
-        } else if (payload.ten_dia_diem) {
-          const realPrice = await fetchRealPriceFromGoogle(
-            payload.ten_dia_diem,
-            payload._ocr,
-            serperTimeout
-          );
-          if (realPrice) {
-            payload.nien_dai_hoac_gia = realPrice;
-          }
-        }
+      if (timeLeftForSerper >= 1100) {
+        payload = await autoVerifyWithGoogle(payload, {
+          areaPoint,
+          locationContext,
+          timeoutMs: Math.min(CONFIG.SERPER_TIMEOUT_MS, timeLeftForSerper - 150)
+        });
       }
 
       setCache(runtimeState.scanCache, imgKey, payload, CONFIG.SCAN_CACHE_TTL_MS, 100);
