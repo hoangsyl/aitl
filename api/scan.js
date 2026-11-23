@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - Gemini Vision Primary + Groq Backup + Auto-Verify + 100 Users
+ * AIvolution Team - Gemini Vision Primary (Auto-Fallback 503) + Groq Backup + Auto-Verify + 100 Users
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -11,10 +11,15 @@ const crypto = require("crypto");
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GEMINI_VISION_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  TOTAL_SCAN_BUDGET_MS: 7500,
-  GEMINI_VISION_TIMEOUT_MS: 4600,
-  GROQ_BACKUP_TIMEOUT_MS: 3200,
+  GEMINI_VISION_MODELS: [
+    "gemini-3.5-flash-lite",
+    "gemini-3.8-flash",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash"
+  ],
+  TOTAL_SCAN_BUDGET_MS: 9200,
+  GEMINI_VISION_TIMEOUT_MS: 4000,
+  GROQ_BACKUP_TIMEOUT_MS: 3000,
   GROQ_MODELS_TIMEOUT_MS: 1200,
   SERPER_TIMEOUT_MS: 800,
   CHAT_TIMEOUT_MS: 4500,
@@ -25,6 +30,7 @@ const CONFIG = {
   TTS_CACHE_TTL_MS: 30 * 60 * 1000,
   KEY_COOLDOWN_429_MS: 45 * 1000,
   KEY_COOLDOWN_AUTH_MS: 10 * 60 * 1000,
+  MODEL_COOLDOWN_503_MS: 60 * 1000,
   FRIENDLY_ERROR:
     "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ, bị mờ hoặc thiếu sáng. Bạn giữ chắc tay và chụp rõ hơn giúp mình nhé!"
 };
@@ -35,12 +41,13 @@ const runtimeState = {
   groqVisionDisabledUntil: 0,
   badGroqVisionModels: new Set(),
   badGeminiModels: new Set(),
+  modelCooldownUntil: new Map(), // Cách ly model bị 503 trong 60s
   keyCooldownUntil: new Map(),
-  rrIndex: Object.create(null), // Round-robin chia tải đều 30 key/nguồn
-  inFlight: new Map(),          // Single-flight gộp request trùng
-  scanCache: new Map(),         // Cache ảnh 15 phút
-  serperCache: new Map(),       // Cache Google/giá 60 phút
-  ttsCache: new Map()           // Cache giọng đọc 30 phút
+  rrIndex: Object.create(null),  // Round-robin chia tải đều 30 key/nguồn
+  inFlight: new Map(),           // Single-flight gộp request trùng
+  scanCache: new Map(),          // Cache ảnh 15 phút
+  serperCache: new Map(),        // Cache Google/giá 60 phút
+  ttsCache: new Map()            // Cache giọng đọc 30 phút
 };
 
 // ==========================================
@@ -416,18 +423,26 @@ LUẬT BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): GEMINI FLASH SIÊU NHANH + XOAY VÒNG KEY
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): GEMINI FLASH + TỰ CÁCH LY 503 + XOAY VÒNG KEY
 // ==========================================
 async function runGeminiPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
   const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
   const errors = [];
+  const now = Date.now();
 
-  for (const model of CONFIG.GEMINI_VISION_MODELS) {
-    if (runtimeState.badGeminiModels.has(model)) continue;
+  // Ưu tiên gọi model đang khỏe trước, đẩy model vừa bị 503 xuống cuối
+  const availableModels = CONFIG.GEMINI_VISION_MODELS.filter((m) => !runtimeState.badGeminiModels.has(m));
+  const readyModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now);
+  const coolingModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) > now);
+  const orderedModels = [...readyModels, ...coolingModels];
 
-    for (const apiKey of apiKeys.slice(0, 3)) {
+  for (const model of orderedModels) {
+    const remainingForModel = deadline - Date.now();
+    if (remainingForModel < 1200) break;
+
+    for (const apiKey of apiKeys.slice(0, 2)) {
       const remaining = deadline - Date.now();
-      if (remaining < 1000) break;
+      if (remaining < 1200) break;
 
       try {
         const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -463,9 +478,15 @@ async function runGeminiPrimaryVision({ apiKeys, prompt, imageBase64, deadline }
 
         const rawText = await res.text();
         if (!res.ok) {
-          if (res.status === 404) runtimeState.badGeminiModels.add(model);
-          else if (res.status === 429) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-          else if (res.status === 401 || res.status === 403) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+          if (res.status === 404) {
+            runtimeState.badGeminiModels.add(model);
+          } else if (res.status === 503) {
+            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_503_MS);
+          } else if (res.status === 429) {
+            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+          } else if (res.status === 401 || res.status === 403) {
+            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+          }
           throw new Error(`Gemini(${model}) HTTP ${res.status}`);
         }
 
@@ -474,15 +495,17 @@ async function runGeminiPrimaryVision({ apiKeys, prompt, imageBase64, deadline }
         if (!content) throw new Error(`Gemini(${model}): Empty content`);
         return { result: extractJson(content), provider: `gemini:${model}` };
       } catch (err) {
-        errors.push(err.message);
-        // 404 (không tồn tại) hoặc 503 (model đang quá tải) -> chuyển ngay sang model Gemini tiếp theo
-        if (err.message.includes("404") || err.message.includes("503")) break;
+        const msg = err?.name === "AbortError" ? `Gemini(${model}) Timeout` : err.message;
+        errors.push(msg);
+        // 404, 503 hoặc Timeout là lỗi từ phía model -> chuyển ngay sang model tiếp theo
+        if (msg.includes("404") || msg.includes("503") || msg.includes("Timeout")) break;
       }
     }
   }
 
-  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Gemini không phản hồi");
+  const finalErr = new Error(errors.slice(0, 3).join(" | ") || "Gemini không phản hồi");
   finalErr.isRateLimit = errors.some((e) => e.includes("429"));
+  finalErr.isOverloaded = errors.some((e) => e.includes("503") || e.includes("Timeout"));
   throw finalErr;
 }
 
@@ -1363,14 +1386,14 @@ module.exports = async (req, res) => {
       let visionOutput = null;
       let geminiError = null;
 
-      // Bước 1: Gọi thẳng Gemini ngay lập tức (0ms trễ)
+      // Bước 1: Gọi thẳng Gemini (dành 8.2s để đủ sức nhảy qua model dự phòng nếu dính 503)
       if (geminiKeys.length) {
         try {
           visionOutput = await runGeminiPrimaryVision({
             apiKeys: geminiKeys,
             prompt,
             imageBase64,
-            deadline: Math.min(deadline, Date.now() + 5400)
+            deadline: Math.min(deadline, Date.now() + 8200)
           });
         } catch (err) {
           geminiError = err;
@@ -1393,6 +1416,7 @@ module.exports = async (req, res) => {
               `Gemini: ${geminiError?.message || "N/A"} || Groq Backup: ${groqErr.message}`
             );
             combinedErr.isRateLimit = Boolean(geminiError?.isRateLimit || groqErr?.isRateLimit);
+            combinedErr.isOverloaded = Boolean(geminiError?.isOverloaded);
             throw combinedErr;
           }
         } else if (geminiError) {
@@ -1430,10 +1454,15 @@ module.exports = async (req, res) => {
 
     return res.status(200).json(finalPayload);
   } catch (err) {
-    return res.status(err?.isRateLimit ? 429 : 502).json({
-      error: err?.isRateLimit
-        ? "Hệ thống đang có nhiều người quét cùng lúc (HTTP 429). Bạn đợi 5–10 giây rồi bấm Quét lại nhé!"
-        : CONFIG.FRIENDLY_ERROR,
+    const status = err?.isRateLimit ? 429 : err?.isOverloaded ? 503 : 502;
+    const message = err?.isRateLimit
+      ? "Hệ thống đang có nhiều người quét cùng lúc (HTTP 429). Bạn đợi 5–10 giây rồi bấm Quét lại nhé!"
+      : err?.isOverloaded
+      ? "Máy chủ AI Google đang quá tải tạm thời (503). Ảnh của bạn vẫn rõ, bạn bấm Quét lại sau 3–5 giây nhé!"
+      : CONFIG.FRIENDLY_ERROR;
+
+    return res.status(status).json({
+      error: message,
       debug: err?.message || "Lỗi xử lý máy chủ"
     });
   }
