@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - High Concurrency & Auto-Verify Client
+ * AIvolution Team - High Concurrency, Auto-Verify & Explore Hub Client
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -218,6 +218,9 @@ function navigateTo(viewName) {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
+    const expModal = document.getElementById("exploreHubModal");
+    if (expModal && !expModal.hidden) return;
+
     if (confirmDialog && confirmDialog.open) {
       confirmDialog.close();
     } else if (activeView === "detail") {
@@ -1124,7 +1127,6 @@ document.getElementById("chatForm").addEventListener("submit", async (e) => {
       ? `GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Hội An & Đà Nẵng`
       : "Hội An – Đà Nẵng";
 
-    // Tự động gửi kèm đối tượng vừa quét gần nhất để Trợ lý hiểu ngữ cảnh
     const latestScan = lastScanData || loadHistory()[0]?.data || null;
 
     const { data } = await fetchApiWithRetry(
@@ -1674,7 +1676,7 @@ document.getElementById("switchBtn").addEventListener("click", () => {
 });
 
 function prepareScanImage(source, srcW, srcH) {
-  const maxSide = 840;
+  const maxSide = 720;
   const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
   canvas.width = Math.round(srcW * scale);
   canvas.height = Math.round(srcH * scale);
@@ -1685,7 +1687,7 @@ function prepareScanImage(source, srcW, srcH) {
   ctx2d.drawImage(source, 0, 0, canvas.width, canvas.height);
 
   return {
-    base64: canvas.toDataURL("image/jpeg", 0.78).split(",")[1],
+    base64: canvas.toDataURL("image/jpeg", 0.70).split(",")[1],
     thumb: makeThumbnail(canvas)
   };
 }
@@ -1855,4 +1857,343 @@ initGPS();
   });
 
   requestAnimationFrame(() => snapGlassToButton(getActiveTabButton(), 1));
+})();
+
+// ==========================================
+// AIvolution - EXPLORE NEWS / FOOD / CHECK-IN MINI-TAB HUB
+// ==========================================
+(function initExploreNewsHub() {
+  const triggerBtn = document.getElementById("btnOpenNewsHub");
+  const modal = document.getElementById("exploreHubModal");
+  const win = document.getElementById("exploreWindow");
+  const track = document.getElementById("exploreTrack");
+  const updatedEl = document.getElementById("exploreUpdatedAt");
+  const refreshBtn = document.getElementById("btnRefreshExplore");
+
+  if (!triggerBtn || !modal || !win || !track) return;
+
+  const TABS = ["news", "food", "checkin"];
+  const tabCache = Object.create(null);
+  const inFlight = Object.create(null);
+  let activeTab = "news";
+  let lastFocusedEl = null;
+
+  const prefersReducedMotion = () =>
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function setTabIndicators(tab) {
+    activeTab = tab;
+    modal.querySelectorAll("[data-explore-tab]").forEach((btn) => {
+      const isMatch = btn.dataset.exploreTab === tab;
+      btn.classList.toggle("active", isMatch);
+      btn.setAttribute("aria-selected", String(isMatch));
+    });
+    const cached = tabCache[tab];
+    if (updatedEl) {
+      updatedEl.textContent = cached?.updatedAt
+        ? `Cập nhật ${cached.updatedAt}`
+        : "Đang đồng bộ...";
+    }
+  }
+
+  function renderSkeleton(paneEl) {
+    paneEl.innerHTML = `
+      <div class="explore-grid">
+        <div class="explore-featured-col">
+          <div class="explore-skel-card"></div>
+          <div class="explore-skel-card"></div>
+        </div>
+        <div class="explore-list-box">
+          <div class="explore-skel-row"></div>
+          <div class="explore-skel-row"></div>
+          <div class="explore-skel-row"></div>
+          <div class="explore-skel-row"></div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderError(paneEl, tab, msg) {
+    paneEl.innerHTML = `
+      <div class="explore-empty">
+        <p>${escapeHtml(msg || "Chưa tải được dữ liệu xu hướng lúc này.")}</p>
+        <button type="button" class="explore-card-action primary" data-retry-tab="${tab}" style="flex:0 0 auto;padding:9px 18px">
+          Tải lại ngay
+        </button>
+      </div>
+    `;
+    const retryBtn = paneEl.querySelector("[data-retry-tab]");
+    if (retryBtn) {
+      retryBtn.addEventListener("click", () => loadTabData(tab, true));
+    }
+  }
+
+  function askAssistantFromExplore(item, tab) {
+    closeModal();
+    if (typeof navigateTo === "function") navigateTo("chat");
+
+    const promptText =
+      tab === "news" || item.type === "news"
+        ? `Tóm tắt nhanh thông tin chính và gợi ý trải nghiệm liên quan đến tin này tại Đà Nẵng – Hội An: "${item.title}"`
+        : `Review ngắn gọn địa điểm "${item.title}" (${item.subtitle}): món ngon/góc chụp ảnh nổi bật, giá tham khảo và khung giờ đi đỡ đông?`;
+
+    const input = document.getElementById("chatInput");
+    const form = document.getElementById("chatForm");
+    if (input && form) {
+      input.value = promptText;
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+      } else {
+        form.dispatchEvent(new Event("submit", { cancelable: true }));
+      }
+    }
+  }
+
+  function renderTabItems(paneEl, tab, items) {
+    if (!Array.isArray(items) || !items.length) {
+      renderError(paneEl, tab, "Chưa có mục nổi bật nào mới. Bạn thử làm mới lại nhé!");
+      return;
+    }
+
+    const featured = items.slice(0, 2);
+    const rest = items.slice(2, 12);
+    const shortTag = tab === "news" ? "NEWS" : tab === "food" ? "FOOD" : "CHECK-IN";
+
+    const featuredHtml = featured
+      .map((item, idx) => {
+        const isPlace = item.type === "place";
+        const actionLabel = isPlace ? "Chỉ đường" : "Đọc bài";
+        const coverHtml = item.image
+          ? `<img class="explore-cover-img" src="${escapeHtml(item.image)}" alt="${escapeHtml(item.title)}" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+          : `<span class="explore-cover-fallback" aria-hidden="true">${shortTag}</span>`;
+
+        return `
+          <article class="explore-featured-card">
+            <a class="explore-cover-link" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">
+              ${coverHtml}
+              <span class="explore-cover-badge tabular-nums">${escapeHtml(item.badge || shortTag)}</span>
+            </a>
+            <div class="explore-featured-content">
+              <div class="explore-meta-row">
+                <span class="explore-badge">${shortTag}</span>
+                <span class="explore-meta-text tabular-nums">${escapeHtml(item.meta || "")}</span>
+              </div>
+              <a class="explore-card-title-link" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">
+                <h3 class="explore-card-title">${escapeHtml(item.title)}</h3>
+              </a>
+              <p class="explore-card-desc">${escapeHtml(item.subtitle || "")}</p>
+              <div class="explore-card-actions">
+                <a class="explore-card-action primary" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">${actionLabel}</a>
+                <button type="button" class="explore-card-action" data-ask-idx="${idx}">Hỏi AI</button>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join("");
+
+    const listHtml = (rest.length ? rest : featured)
+      .map((item, idx) => {
+        const realIdx = rest.length ? idx + 2 : idx;
+        const isPlace = item.type === "place";
+        const thumbHtml = item.image
+          ? `<img class="explore-list-thumb" src="${escapeHtml(item.image)}" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer" />`
+          : `<span class="explore-list-fallback" aria-hidden="true">${shortTag}</span>`;
+
+        return `
+          <article class="explore-list-item">
+            <a class="explore-list-media" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">
+              ${thumbHtml}
+            </a>
+            <div class="explore-list-info">
+              <a class="explore-list-title" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">${escapeHtml(item.title)}</a>
+              <div class="explore-list-bottom">
+                <span class="explore-list-sub tabular-nums">${escapeHtml(item.badge || "")}${item.meta ? ` • ${escapeHtml(item.meta)}` : ""}</span>
+                <div class="explore-list-btns">
+                  <button type="button" class="explore-mini-btn" data-ask-idx="${realIdx}" aria-label="Hỏi AI về ${escapeHtml(item.title)}">AI</button>
+                  <a class="explore-mini-btn accent" href="${escapeHtml(item.url || "#")}" target="_blank" rel="noopener noreferrer">${isPlace ? "Maps" : "Đọc"}</a>
+                </div>
+              </div>
+            </div>
+          </article>
+        `;
+      })
+      .join("");
+
+    paneEl.innerHTML = `
+      <div class="explore-grid">
+        <div class="explore-featured-col">${featuredHtml}</div>
+        <div class="explore-list-box">${listHtml}</div>
+      </div>
+    `;
+
+    // Tự động chuyển sang khung dự phòng nếu ảnh từ báo gốc bị lỗi tải
+    paneEl.querySelectorAll("img.explore-cover-img, img.explore-list-thumb").forEach((img) => {
+      img.addEventListener("error", () => {
+        const fb = document.createElement("span");
+        fb.className = img.classList.contains("explore-cover-img")
+          ? "explore-cover-fallback"
+          : "explore-list-fallback";
+        fb.setAttribute("aria-hidden", "true");
+        fb.textContent = shortTag;
+        img.replaceWith(fb);
+      }, { once: true });
+    });
+
+    paneEl.querySelectorAll("[data-ask-idx]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const item = items[Number(btn.dataset.askIdx)];
+        if (item) askAssistantFromExplore(item, tab);
+      });
+    });
+  }
+
+  async function loadTabData(tab, force = false) {
+    const paneEl = document.getElementById(`pane-${tab}`);
+    if (!paneEl) return;
+
+    const cached = tabCache[tab];
+    if (!force && cached && Date.now() - cached.fetchedAt < 10 * 60 * 1000) {
+      if (!paneEl.dataset.rendered) {
+        renderTabItems(paneEl, tab, cached.items);
+        paneEl.dataset.rendered = "1";
+      }
+      if (tab === activeTab && updatedEl) {
+        updatedEl.textContent = `Cập nhật ${cached.updatedAt}`;
+      }
+      return;
+    }
+
+    if (inFlight[tab] && !force) return;
+    inFlight[tab] = true;
+    renderSkeleton(paneEl);
+    if (tab === activeTab && updatedEl) updatedEl.textContent = "Đang tải...";
+
+    try {
+      const res = await fetch(`/api/explore?tab=${encodeURIComponent(tab)}${force ? `&_t=${Date.now()}` : ""}`);
+      const data = await res.json();
+      if (!res.ok || !Array.isArray(data.items)) {
+        throw new Error(data.error || "Không tải được dữ liệu.");
+      }
+      tabCache[tab] = {
+        items: data.items,
+        updatedAt: data.updatedAt || "Vừa xong",
+        fetchedAt: Date.now()
+      };
+      renderTabItems(paneEl, tab, data.items);
+      paneEl.dataset.rendered = "1";
+      if (tab === activeTab && updatedEl) {
+        updatedEl.textContent = `Cập nhật ${tabCache[tab].updatedAt}`;
+      }
+    } catch (err) {
+      renderError(paneEl, tab, err?.message || "Mạng không ổn định, bạn thử tải lại nhé.");
+    } finally {
+      inFlight[tab] = false;
+    }
+  }
+
+  function scrollToTab(tab) {
+    const paneEl = document.getElementById(`pane-${tab}`);
+    if (!paneEl) return;
+    setTabIndicators(tab);
+    paneEl.scrollIntoView({
+      behavior: prefersReducedMotion() ? "auto" : "smooth",
+      inline: "start",
+      block: "nearest"
+    });
+    loadTabData(tab, false);
+  }
+
+  // Dùng IntersectionObserver đồng bộ khi vuốt ngang Mini-Tab (không poll scroll)
+  const paneObserver = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.55) {
+          const tab = entry.target.dataset.paneTab;
+          if (tab && TABS.includes(tab)) {
+            if (tab !== activeTab) setTabIndicators(tab);
+            loadTabData(tab, false);
+          }
+        }
+      }
+    },
+    { root: track, threshold: 0.55 }
+  );
+
+  track.querySelectorAll(".explore-pane").forEach((pane) => paneObserver.observe(pane));
+
+  function openModal() {
+    lastFocusedEl = document.activeElement;
+    modal.hidden = false;
+    win.classList.add("is-animating");
+    document.body.style.overflow = "hidden";
+
+    requestAnimationFrame(() => {
+      modal.classList.add("is-open");
+    });
+
+    loadTabData(activeTab, false);
+    setTimeout(() => {
+      if (modal.classList.contains("is-open")) {
+        TABS.forEach((t) => {
+          if (t !== activeTab && !tabCache[t]) loadTabData(t, false);
+        });
+      }
+    }, 450);
+
+    const closeBtn = document.getElementById("btnCloseExplore");
+    if (closeBtn) closeBtn.focus();
+  }
+
+  function closeModal() {
+    if (modal.hidden) return;
+    win.classList.add("is-animating");
+    modal.classList.remove("is-open");
+    document.body.style.overflow = "";
+
+    const finishClose = () => {
+      win.classList.remove("is-animating");
+      if (!modal.classList.contains("is-open")) {
+        modal.hidden = true;
+      }
+    };
+
+    if (prefersReducedMotion()) {
+      finishClose();
+    } else {
+      setTimeout(finishClose, 240);
+    }
+
+    if (lastFocusedEl && typeof lastFocusedEl.focus === "function") {
+      lastFocusedEl.focus();
+    }
+  }
+
+  win.addEventListener("transitionend", () => {
+    win.classList.remove("is-animating");
+  });
+
+  triggerBtn.addEventListener("click", openModal);
+
+  modal.querySelectorAll("[data-explore-close]").forEach((el) => {
+    el.addEventListener("click", closeModal);
+  });
+
+  modal.querySelectorAll("[data-explore-tab]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.exploreTab;
+      if (tab && TABS.includes(tab)) scrollToTab(tab);
+    });
+  });
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => loadTabData(activeTab, true));
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) {
+      e.stopPropagation();
+      closeModal();
+    }
+  });
 })();
