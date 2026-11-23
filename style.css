@@ -2059,7 +2059,7 @@ input:focus-visible {
 
 /* ==========================================
    NEWS TILE & EXPLORE MINI-TAB DASHBOARD HUB
-   (Đồng bộ hoàn toàn Light / Dark Mode của AIvolution)
+   (Đồng bộ Light / Dark Mode + Ảnh báo 16:9 & 4:3)
    ========================================== */
 :root {
   --exp-backdrop: rgba(15, 23, 42, 0.42);
@@ -2354,59 +2354,68 @@ input:focus-visible {
   gap: 12px;
 }
 
+/* Thẻ Tin Nổi Bật (Ảnh bìa 16:9 tràn ngang giống báo điện tử) */
 .explore-featured-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 14px;
   border-radius: 18px;
   border: 1px solid var(--exp-border-strong);
   background: var(--exp-surface-card);
+  overflow: hidden;
 }
 
-.explore-featured-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
+.explore-cover-link {
+  position: relative;
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: var(--exp-surface-soft);
+  overflow: hidden;
+  text-decoration: none;
 }
 
-.explore-thumb {
-  flex: 0 0 64px;
-  width: 64px;
-  height: 64px;
-  border-radius: 14px;
+.explore-cover-img {
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  background: var(--exp-surface-soft);
-  border: 1px solid var(--border);
+  display: block;
 }
 
-.explore-thumb-fallback {
-  flex: 0 0 64px;
-  width: 64px;
-  height: 64px;
-  border-radius: 14px;
-  background: var(--exp-surface-soft);
-  border: 1px solid var(--border);
+.explore-cover-fallback {
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 800;
-  color: var(--lime-vivid);
+  color: var(--muted);
+  background: var(--exp-surface-soft);
 }
 
-.explore-card-body {
-  flex: 1;
-  min-width: 0;
+.explore-cover-badge {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(11, 11, 13, 0.82);
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.explore-featured-content {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
+  padding: 13px 14px 14px;
 }
 
 .explore-meta-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .explore-badge {
@@ -2424,8 +2433,13 @@ input:focus-visible {
   color: var(--muted);
 }
 
+.explore-card-title-link {
+  text-decoration: none;
+  color: inherit;
+}
+
 .explore-card-title {
-  font-size: 14.5px;
+  font-size: 15.5px;
   font-weight: 700;
   line-height: 1.35;
   color: var(--ink);
@@ -2437,8 +2451,8 @@ input:focus-visible {
 }
 
 .explore-card-desc {
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.48;
   color: var(--muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -2459,8 +2473,8 @@ input:focus-visible {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 10px;
-  border-radius: 11px;
+  padding: 9px 12px;
+  border-radius: 12px;
   font-size: 12.5px;
   font-weight: 700;
   text-decoration: none;
@@ -2481,11 +2495,11 @@ input:focus-visible {
   transform: scale(0.96);
 }
 
-/* Khung danh sách các mục tiếp theo */
+/* Danh sách bài báo bên dưới (Ảnh 4:3 bên trái + 2 dòng tiêu đề rõ nét) */
 .explore-list-box {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
   padding: 10px;
   border-radius: 18px;
   border: 1px solid var(--border);
@@ -2494,25 +2508,41 @@ input:focus-visible {
 
 .explore-list-item {
   display: flex;
-  align-items: center;
-  gap: 10px;
+  align-items: stretch;
+  gap: 12px;
   padding: 10px;
-  border-radius: 14px;
+  border-radius: 15px;
   border: 1px solid var(--border);
   background: var(--exp-surface-card);
 }
 
-.explore-list-thumb {
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
+.explore-list-media {
+  flex: 0 0 96px;
+  width: 96px;
+  aspect-ratio: 4 / 3;
   border-radius: 11px;
-  object-fit: cover;
+  overflow: hidden;
   background: var(--exp-surface-soft);
+  border: 1px solid var(--border);
+  display: block;
+  text-decoration: none;
+  align-self: center;
+}
+
+.explore-list-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.explore-list-fallback {
+  width: 100%;
+  height: 100%;
   display: grid;
   place-items: center;
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 11.5px;
+  font-weight: 800;
   color: var(--muted);
 }
 
@@ -2521,20 +2551,32 @@ input:focus-visible {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .explore-list-title {
   font-size: 13.5px;
-  font-weight: 600;
+  font-weight: 700;
+  line-height: 1.32;
   color: var(--ink);
-  white-space: nowrap;
+  text-decoration: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-wrap: balance;
+}
+
+.explore-list-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
 }
 
 .explore-list-sub {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -2544,14 +2586,14 @@ input:focus-visible {
 .explore-list-btns {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   flex-shrink: 0;
 }
 
 .explore-mini-btn {
-  padding: 6px 9px;
-  border-radius: 9px;
-  font-size: 11.5px;
+  padding: 5px 9px;
+  border-radius: 8px;
+  font-size: 11px;
   font-weight: 700;
   text-decoration: none;
   border: 1px solid var(--border);
@@ -2619,9 +2661,9 @@ input:focus-visible {
   white-space: nowrap;
 }
 
-/* Skeleton loading (chỉ chạy animation khi modal đang mở) */
+/* Skeleton loading dạng khung ảnh báo (chỉ chạy animation khi modal đang mở) */
 .explore-skel-card {
-  height: 126px;
+  height: 230px;
   border-radius: 18px;
   background: var(--exp-surface-card);
   border: 1px solid var(--border);
@@ -2629,8 +2671,8 @@ input:focus-visible {
 }
 
 .explore-skel-row {
-  height: 62px;
-  border-radius: 14px;
+  height: 92px;
+  border-radius: 15px;
   background: var(--exp-surface-card);
   border: 1px solid var(--border);
   opacity: 0.65;
