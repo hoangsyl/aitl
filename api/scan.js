@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - Gemini 3.x Multi-Cluster (Auto-Fallback 503) + OpenRouter Free Vision + Groq Backup
+ * AIvolution Team - OpenRouter Free Vision Primary + Groq Chat/Backup + Auto-Verify + 100 Users
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -7,25 +7,23 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG
+// 1. CẤU HÌNH HỆ THỐNG (OPENROUTER VISION CHÍNH – GROQ CHAT CHÍNH & DỰ PHÒNG)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GEMINI_VISION_MODELS: [
-    "gemini-3.5-flash-lite",
-    "gemini-3.8-flash",
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.1-flash-lite"
-  ],
   OPENROUTER_VISION_MODELS: [
-    "google/gemma-3-27b-it:free",
-    "qwen/qwen2.5-vl-72b-instruct:free",
-    "meta-llama/llama-3.2-11b-vision-instruct:free"
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-super-vl:free",
+    "google/gemma-4-31b-it:free",
+    "openrouter/free"
+  ],
+  OPENROUTER_CHAT_MODELS: [
+    "openrouter/free",
+    "google/gemma-4-26b-a4b-it:free",
+    "nvidia/nemotron-3.5-lightning:free"
   ],
   TOTAL_SCAN_BUDGET_MS: 9300,
-  GEMINI_VISION_TIMEOUT_MS: 3600,
-  OPENROUTER_BACKUP_TIMEOUT_MS: 4200,
+  OPENROUTER_VISION_TIMEOUT_MS: 4300,
   GROQ_BACKUP_TIMEOUT_MS: 3000,
   GROQ_MODELS_TIMEOUT_MS: 1200,
   SERPER_TIMEOUT_MS: 800,
@@ -47,11 +45,10 @@ const runtimeState = {
   cachedGroqModelsAt: 0,
   groqVisionDisabledUntil: 0,
   badGroqVisionModels: new Set(),
-  badGeminiModels: new Set(),
   badOpenRouterModels: new Set(),
-  modelCooldownUntil: new Map(), // Cách ly model bị 503 trong 60s
+  modelCooldownUntil: new Map(), // Cách ly model bị 502/503 trong 60s
   keyCooldownUntil: new Map(),
-  rrIndex: Object.create(null),  // Round-robin chia tải đều 30 key/nguồn
+  rrIndex: Object.create(null),  // Round-robin chia tải đều tối đa 30 key/nguồn
   inFlight: new Map(),           // Single-flight gộp request trùng
   scanCache: new Map(),          // Cache ảnh 15 phút
   serperCache: new Map(),        // Cache Google/giá 60 phút
@@ -402,7 +399,7 @@ LUẬT BẮT BUỘC:
    - Giá ("nien_dai_hoac_gia"): Với vật thể/đồ trang trí/sản phẩm/món ăn phổ biến tại Việt Nam, ước lượng khoảng giá bán lẻ thực tế VNĐ (VD: "25.000 - 60.000 VNĐ"). Với trường học/di tích, ghi năm thành lập thật hoặc "Chưa xác định rõ".
    - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi rõ từng phần vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
 5. Đặc sản: Phân biệt chính xác đặc sản Hội An Đà Nẵng 100% không bịa không nhầm
-6. ĐỘ CHI TIẾT & TỐC ĐỘ: Viết giàu thông tin, cụ thể nhưng gọn ý (2–3 câu cho mục chính, 1–2 câu cho mục phụ) để vừa đủ chiều sâu vừa trả về nhanh. CHỈ TRẢ JSON:
+6. ĐỘ CHI TIẾT & TỐC ĐỘ: Viết giàu thông tin, cụ thể nhưng gọn ý (2–3 câu cho mục chính, 1–2 câu cho mục phụ) để vừa đủ chiều sâu vừa trả về nhanh. CHỈ TRẢ JSON THUẦN, KHÔNG GIẢI THÍCH THÊM:
 
 {
   "khong_nhan_dien_duoc": false,
@@ -431,105 +428,29 @@ LUẬT BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): 5 CỤM MODEL GEMINI 3.x + TỰ CÁCH LY 503
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): OPENROUTER FREE VISION + XOAY VÒNG KEY & MODEL
 // ==========================================
-async function runGeminiPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
-  const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
+async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
+  const imageUrl = String(imageBase64).startsWith("data:image")
+    ? imageBase64
+    : `data:image/jpeg;base64,${imageBase64}`;
   const errors = [];
   const now = Date.now();
 
-  const availableModels = CONFIG.GEMINI_VISION_MODELS.filter((m) => !runtimeState.badGeminiModels.has(m));
+  const availableModels = CONFIG.OPENROUTER_VISION_MODELS.filter(
+    (m) => !runtimeState.badOpenRouterModels.has(m)
+  );
   const readyModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now);
   const coolingModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) > now);
   const orderedModels = [...readyModels, ...coolingModels];
 
   for (const model of orderedModels) {
     const remainingForModel = deadline - Date.now();
-    if (remainingForModel < 1100) break;
+    if (remainingForModel < 1300) break;
 
-    for (const apiKey of apiKeys.slice(0, 2)) {
+    for (const apiKey of apiKeys.slice(0, 3)) {
       const remaining = deadline - Date.now();
-      if (remaining < 1100) break;
-
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = {
-          temperature: 0.1,
-          maxOutputTokens: 1150,
-          responseMimeType: "application/json"
-        };
-        if (/3\.8-flash|3\.6-flash|2\.5-flash/.test(model)) {
-          generationConfig.thinkingConfig = { thinkingBudget: 0 };
-        }
-
-        const res = await fetchWithTimeout(
-          endpoint,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: prompt },
-                    { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } }
-                  ]
-                }
-              ],
-              generationConfig
-            })
-          },
-          Math.min(CONFIG.GEMINI_VISION_TIMEOUT_MS, remaining)
-        );
-
-        const rawText = await res.text();
-        if (!res.ok) {
-          if (res.status === 404) {
-            runtimeState.badGeminiModels.add(model);
-          } else if (res.status === 503) {
-            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_503_MS);
-          } else if (res.status === 429) {
-            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-          } else if (res.status === 401 || res.status === 403) {
-            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
-          }
-          throw new Error(`Gemini(${model}) HTTP ${res.status}`);
-        }
-
-        const parsed = JSON.parse(rawText.trim());
-        const content = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!content) throw new Error(`Gemini(${model}): Empty content`);
-        return { result: extractJson(content), provider: `gemini:${model}` };
-      } catch (err) {
-        const msg = err?.name === "AbortError" ? `Gemini(${model}) Timeout` : err.message;
-        errors.push(msg);
-        if (msg.includes("404") || msg.includes("503") || msg.includes("Timeout")) break;
-      }
-    }
-  }
-
-  const finalErr = new Error(errors.slice(0, 4).join(" | ") || "Gemini không phản hồi");
-  finalErr.isRateLimit = errors.some((e) => e.includes("429"));
-  finalErr.isOverloaded = errors.some((e) => e.includes("503") || e.includes("Timeout"));
-  throw finalErr;
-}
-
-// ==========================================
-// 6. TẦNG 2 (DỰ PHÒNG ĐỘC LẬP CHỐNG SẬP 503): OPENROUTER FREE VISION
-// ==========================================
-async function runOpenRouterBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
-  const imageUrl = String(imageBase64).startsWith("data:image")
-    ? imageBase64
-    : `data:image/jpeg;base64,${imageBase64}`;
-  const errors = [];
-
-  for (const model of CONFIG.OPENROUTER_VISION_MODELS) {
-    if (runtimeState.badOpenRouterModels.has(model)) continue;
-
-    for (const apiKey of apiKeys.slice(0, 2)) {
-      const remaining = deadline - Date.now();
-      if (remaining < 1400) break;
+      if (remaining < 1300) break;
 
       try {
         const res = await fetchWithTimeout(
@@ -545,7 +466,7 @@ async function runOpenRouterBackupVision({ apiKeys, prompt, imageBase64, deadlin
             body: JSON.stringify({
               model,
               temperature: 0.1,
-              max_tokens: 1100,
+              max_tokens: 1150,
               messages: [
                 {
                   role: "user",
@@ -557,36 +478,54 @@ async function runOpenRouterBackupVision({ apiKeys, prompt, imageBase64, deadlin
               ]
             })
           },
-          Math.min(CONFIG.OPENROUTER_BACKUP_TIMEOUT_MS, remaining)
+          Math.min(CONFIG.OPENROUTER_VISION_TIMEOUT_MS, remaining)
         );
 
         const rawText = await res.text();
         if (!res.ok) {
-          if (res.status === 404) runtimeState.badOpenRouterModels.add(model);
-          else if (res.status === 429) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-          else if (res.status === 401 || res.status === 403) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
-          throw new Error(`OpenRouter(${model}) HTTP ${res.status}`);
+          let errDetail = "";
+          try {
+            errDetail = JSON.parse(rawText)?.error?.message || "";
+          } catch (_) {}
+
+          if (res.status === 404) {
+            runtimeState.badOpenRouterModels.add(model);
+          } else if (res.status === 502 || res.status === 503) {
+            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_503_MS);
+          } else if (res.status === 429) {
+            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+          } else if (res.status === 401 || res.status === 402 || res.status === 403) {
+            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+          }
+          throw new Error(`OpenRouter(${model}) HTTP ${res.status}${errDetail ? `: ${errDetail.slice(0, 80)}` : ""}`);
         }
 
         const parsed = JSON.parse(rawText.trim());
         const content = parsed.choices?.[0]?.message?.content;
         if (!content) throw new Error(`OpenRouter(${model}): Empty content`);
-        return { result: extractJson(content), provider: `openrouter:${model.split("/").pop()}` };
+        const usedModel = parsed.model || model;
+        return {
+          result: extractJson(content),
+          provider: `openrouter:${String(usedModel).split("/").pop()}`
+        };
       } catch (err) {
         const msg = err?.name === "AbortError" ? `OpenRouter(${model}) Timeout` : err.message;
         errors.push(msg);
-        if (msg.includes("404") || msg.includes("503") || msg.includes("Timeout")) break;
+        if (msg.includes("404") || msg.includes("502") || msg.includes("503") || msg.includes("Timeout")) {
+          break;
+        }
       }
     }
   }
 
-  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "OpenRouter không phản hồi");
+  const finalErr = new Error(errors.slice(0, 3).join(" | ") || "OpenRouter không phản hồi");
   finalErr.isRateLimit = errors.some((e) => e.includes("429"));
+  finalErr.isOverloaded = errors.some((e) => e.includes("503") || e.includes("502") || e.includes("Timeout"));
   throw finalErr;
 }
 
 // ==========================================
-// 7. TẦNG 3 (DỰ PHÒNG QUÉT ẢNH + CHÍNH CHO CHATBOT): GROQ LPU
+// 6. TẦNG 2 (DỰ PHÒNG QUÉT ẢNH + CHÍNH CHO CHATBOT): GROQ LPU
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -749,7 +688,7 @@ async function runGroqBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
 }
 
 // ==========================================
-// 8. XÁC THỰC GOOGLE THÔNG MINH (MAX 800ms + CACHE 60P)
+// 7. XÁC THỰC GOOGLE THÔNG MINH (MAX 800ms + CACHE 60P)
 // ==========================================
 async function querySerperCached(query, num = 4, timeoutMs = CONFIG.SERPER_TIMEOUT_MS) {
   const normKey = `serper:${normalizeTextForMatch(query)}:${num}`;
@@ -940,7 +879,7 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
 }
 
 // ==========================================
-// 9. TRỢ LÝ AI THÔNG MINH (GROQ CHÍNH -> GEMINI DỰ PHÒNG)
+// 8. TRỢ LÝ AI THÔNG MINH (GROQ CHÍNH -> OPENROUTER FREE DỰ PHÒNG)
 // ==========================================
 async function searchWebContextForChat(userText, lastScan) {
   if (!userText) return "";
@@ -1043,56 +982,53 @@ async function handleGroqChat({ apiKeys, messages, locationContext, lastScan }) 
   throw new Error("Groq chat unavailable");
 }
 
-async function handleGeminiBackupChat({ apiKeys, messages, locationContext, lastScan }) {
+async function handleOpenRouterBackupChat({ apiKeys, messages, locationContext, lastScan }) {
   const lastUserMsg = Array.isArray(messages)
     ? [...messages].reverse().find((m) => m.role === "user")?.content || ""
     : "";
   const webContext = await searchWebContextForChat(lastUserMsg, lastScan);
   const systemPrompt = buildSmartChatSystemPrompt({ locationContext, lastScan, webContext });
 
-  const contents = (Array.isArray(messages) ? messages.slice(-10) : []).map((m) => ({
-    role: m.role === "assistant" ? "model" : "user",
-    parts: [{ text: String(m.content || "") }]
-  }));
-
-  const now = Date.now();
-  const availableModels = CONFIG.GEMINI_VISION_MODELS.filter((m) => !runtimeState.badGeminiModels.has(m));
-  const orderedModels = [
-    ...availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now),
-    ...availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) > now)
+  const chatMessages = [
+    { role: "system", content: systemPrompt },
+    ...(Array.isArray(messages) ? messages.slice(-10) : [])
   ];
 
-  for (const model of orderedModels) {
+  for (const model of CONFIG.OPENROUTER_CHAT_MODELS) {
     for (const apiKey of apiKeys.slice(0, 2)) {
       try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = { temperature: 0.3, maxOutputTokens: 650 };
-        if (/3\.8-flash|3\.6-flash|2\.5-flash/.test(model)) {
-          generationConfig.thinkingConfig = { thinkingBudget: 0 };
-        }
-
         const res = await fetchWithTimeout(
-          endpoint,
+          "https://openrouter.ai/api/v1/chat/completions",
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+              "HTTP-Referer": "https://aitl-teal.vercel.app",
+              "X-Title": "AIvolution"
+            },
             body: JSON.stringify({
-              systemInstruction: { parts: [{ text: systemPrompt }] },
-              contents,
-              generationConfig
+              model,
+              temperature: 0.3,
+              max_tokens: 650,
+              messages: chatMessages
             })
           },
           CONFIG.CHAT_TIMEOUT_MS
         );
-        if (res.status === 503) {
-          runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_503_MS);
+        if (res.status === 429) {
+          markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
           break;
         }
         if (!res.ok) continue;
         const data = await res.json();
-        const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        const reply = data.choices?.[0]?.message?.content?.trim();
         if (reply) {
-          return reply.replace(/\*\*/g, "").replace(/^#+\s*/gm, "").trim();
+          return reply
+            .replace(/<think>[\s\S]*?<\/think>/gi, "")
+            .replace(/\*\*/g, "")
+            .replace(/^#+\s*/gm, "")
+            .trim();
         }
       } catch (_) {}
     }
@@ -1101,7 +1037,7 @@ async function handleGeminiBackupChat({ apiKeys, messages, locationContext, last
 }
 
 // ==========================================
-// 10. GIỌNG ĐỌC MP3 CÓ CACHE + SINGLE-FLIGHT
+// 9. GIỌNG ĐỌC MP3 CÓ CACHE + SINGLE-FLIGHT
 // ==========================================
 function cleanTtsText(rawText) {
   return String(rawText || "")
@@ -1390,7 +1326,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 11. ENTRY POINT SERVERLESS HANDLER
+// 10. ENTRY POINT SERVERLESS HANDLER (OPENROUTER VISION CHÍNH -> GROQ BACKUP)
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1415,18 +1351,17 @@ module.exports = async (req, res) => {
       }
     }
 
-    const geminiKeys = collectApiKeys("GEMINI_API_KEY");
     const openRouterKeys = collectApiKeys("OPENROUTER_API_KEY");
     const groqKeys = collectApiKeys("GROQ_API_KEY");
 
-    if (!geminiKeys.length && !openRouterKeys.length && !groqKeys.length) {
+    if (!openRouterKeys.length && !groqKeys.length) {
       return res.status(500).json({
         error: CONFIG.FRIENDLY_ERROR,
-        debug: "Thiếu biến môi trường GEMINI_API_KEY / OPENROUTER_API_KEY / GROQ_API_KEY trên Vercel"
+        debug: "Thiếu biến môi trường OPENROUTER_API_KEY trên Vercel"
       });
     }
 
-    // --- 2. CHATBOT THÔNG MINH (Groq chính -> Gemini dự phòng) ---
+    // --- 2. CHATBOT THÔNG MINH (Groq chính -> OpenRouter Free dự phòng) ---
     if (body.mode === "chat") {
       if (groqKeys.length) {
         try {
@@ -1441,19 +1376,19 @@ module.exports = async (req, res) => {
           console.error("[Groq Chat Fallback Reason]:", err.message);
         }
       }
-      if (geminiKeys.length) {
-        const reply = await handleGeminiBackupChat({
-          apiKeys: geminiKeys,
+      if (openRouterKeys.length) {
+        const reply = await handleOpenRouterBackupChat({
+          apiKeys: openRouterKeys,
           messages: body.messages,
           locationContext: body.locationContext,
           lastScan: body.lastScan
         });
-        return res.status(200).json({ reply, provider: "gemini" });
+        return res.status(200).json({ reply, provider: "openrouter" });
       }
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. QUÉT ẢNH (5 MODEL GEMINI 3.x -> OPENROUTER FREE VISION -> GROQ BACKUP -> TỰ XÁC THỰC GOOGLE) ---
+    // --- 3. QUÉT ẢNH (OPENROUTER FREE VISION CHÍNH -> GROQ BACKUP -> TỰ XÁC THỰC GOOGLE) ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1471,41 +1406,24 @@ module.exports = async (req, res) => {
       const prompt = buildVisionPrompt(locationContext);
 
       let visionOutput = null;
-      let geminiError = null;
       let openRouterError = null;
 
-      // Bước 1: Gọi 5 cụm model Gemini 3.x (tự bỏ qua model đang bị 503)
-      if (geminiKeys.length) {
-        const geminiBudgetMs = openRouterKeys.length ? 5800 : 8200;
+      // Bước 1: Gọi thẳng OpenRouter Free Vision (tự xoay vòng 4 model & nhiều key)
+      if (openRouterKeys.length) {
         try {
-          visionOutput = await runGeminiPrimaryVision({
-            apiKeys: geminiKeys,
-            prompt,
-            imageBase64,
-            deadline: Math.min(deadline, Date.now() + geminiBudgetMs)
-          });
-        } catch (err) {
-          geminiError = err;
-          console.error("[Gemini Vision Fallback Reason]:", err.message);
-        }
-      }
-
-      // Bước 2: Dự phòng độc lập sang OpenRouter Free Vision nếu cả 5 model Gemini cùng 503
-      if (!visionOutput && openRouterKeys.length && deadline - Date.now() >= 1600) {
-        try {
-          visionOutput = await runOpenRouterBackupVision({
+          visionOutput = await runOpenRouterPrimaryVision({
             apiKeys: openRouterKeys,
             prompt,
             imageBase64,
-            deadline
+            deadline: Math.min(deadline, Date.now() + 8300)
           });
-        } catch (orErr) {
-          openRouterError = orErr;
-          console.error("[OpenRouter Vision Fallback Reason]:", orErr.message);
+        } catch (err) {
+          openRouterError = err;
+          console.error("[OpenRouter Vision Fallback Reason]:", err.message);
         }
       }
 
-      // Bước 3: Dự phòng cuối sang Groq Vision nếu vẫn chưa có kết quả
+      // Bước 2: Dự phòng sang Groq Vision nếu OpenRouter lỗi toàn tập
       if (!visionOutput) {
         if (groqKeys.length && Date.now() >= runtimeState.groqVisionDisabledUntil && deadline - Date.now() >= 1400) {
           try {
@@ -1516,29 +1434,17 @@ module.exports = async (req, res) => {
               deadline
             });
           } catch (groqErr) {
-            const parts = [
-              geminiError ? `Gemini: ${geminiError.message}` : null,
-              openRouterError ? `OpenRouter: ${openRouterError.message}` : null,
-              `Groq: ${groqErr.message}`
-            ].filter(Boolean);
-            const combinedErr = new Error(parts.join(" || "));
-            combinedErr.isRateLimit = Boolean(
-              geminiError?.isRateLimit || openRouterError?.isRateLimit || groqErr?.isRateLimit
+            const combinedErr = new Error(
+              `OpenRouter: ${openRouterError?.message || "N/A"} || Groq: ${groqErr.message}`
             );
-            combinedErr.isOverloaded = Boolean(geminiError?.isOverloaded);
+            combinedErr.isRateLimit = Boolean(openRouterError?.isRateLimit || groqErr?.isRateLimit);
+            combinedErr.isOverloaded = Boolean(openRouterError?.isOverloaded);
             throw combinedErr;
           }
-        } else if (geminiError || openRouterError) {
-          const parts = [
-            geminiError ? `Gemini: ${geminiError.message}` : null,
-            openRouterError ? `OpenRouter: ${openRouterError.message}` : null
-          ].filter(Boolean);
-          const combinedErr = new Error(parts.join(" || "));
-          combinedErr.isRateLimit = Boolean(geminiError?.isRateLimit || openRouterError?.isRateLimit);
-          combinedErr.isOverloaded = Boolean(geminiError?.isOverloaded);
-          throw combinedErr;
+        } else if (openRouterError) {
+          throw openRouterError;
         } else {
-          throw new Error("Thiếu API Key hoạt động để quét ảnh");
+          throw new Error("Thiếu biến môi trường OPENROUTER_API_KEY trên Vercel");
         }
       }
 
@@ -1550,7 +1456,7 @@ module.exports = async (req, res) => {
 
       if (payload.error) return payload;
 
-      // Bước 4: Tự xác thực địa chỉ/năm thành lập/giá qua Google nếu còn quỹ thời gian
+      // Bước 3: Tự xác thực địa chỉ/năm thành lập/giá qua Google nếu còn quỹ thời gian
       const timeLeftForSerper = deadline - Date.now();
       if (timeLeftForSerper >= 850) {
         payload = await autoVerifyWithGoogle(payload, {
@@ -1574,7 +1480,7 @@ module.exports = async (req, res) => {
     const message = err?.isRateLimit
       ? "Hệ thống đang có nhiều người quét cùng lúc (HTTP 429). Bạn đợi 5–10 giây rồi bấm Quét lại nhé!"
       : err?.isOverloaded
-      ? "Máy chủ AI Google đang quá tải tạm thời (503). Ảnh của bạn vẫn rõ, bạn bấm Quét lại sau 3–5 giây nhé!"
+      ? "Máy chủ AI đang quá tải tạm thời (503). Ảnh của bạn vẫn rõ, bạn bấm Quét lại sau 3–5 giây nhé!"
       : CONFIG.FRIENDLY_ERROR;
 
     return res.status(status).json({
