@@ -321,37 +321,90 @@ function dedupeAndSortWithImages(list, maxItems = 12) {
 }
 
 // ==========================================
-// TAB 1: NEWS THỜI GIAN THỰC ĐÀ NẴNG – HỘI AN (LUÔN ƯU TIÊN BÀI CÓ ẢNH)
+// TAB 1: NEWS THỜI GIAN THỰC ĐÀ NẴNG – HỘI AN (40–45 BÀI BÁO CÓ ẢNH)
 // ==========================================
 async function getFreeRealtimeNews() {
-  const dnHaFilter = /đà nẵng|hội an|quảng nam|cầu rồng|sơn trà|bà nà|mỹ khê|cù lao chàm|miền trung/i;
-  const gNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent('("Đà Nẵng" OR "Hội An") (du lịch OR sự kiện OR lễ hội OR tin mới) when:7d')}&hl=vi&gl=VN&ceid=VN:vi`;
+  const dnHaFilter =
+    /đà nẵng|hội an|quảng nam|cầu rồng|sông hàn|sơn trà|bà nà|mỹ khê|cù lao chàm|ngũ hành sơn|hải châu|cẩm châu|an bàng|miền trung/i;
 
-  const settled = await Promise.allSettled([
-    fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress", filterRegex: dnHaFilter, limit: 6 }),
-    fetchRssFeed("https://vnexpress.net/rss/thoi-su.rss", { defaultSource: "VnExpress", filterRegex: dnHaFilter, limit: 5 }),
-    fetchRssFeed("https://tuoitre.vn/rss/du-lich.rss", { defaultSource: "Tuổi Trẻ", filterRegex: dnHaFilter, limit: 6 }),
-    fetchRssFeed("https://tuoitre.vn/rss/thoi-su.rss", { defaultSource: "Tuổi Trẻ", filterRegex: dnHaFilter, limit: 5 }),
-    fetchRssFeed("https://thanhnien.vn/rss/du-lich.rss", { defaultSource: "Thanh Niên", filterRegex: dnHaFilter, limit: 6 }),
-    fetchRssFeed("https://dantri.com.vn/rss/du-lich.rss", { defaultSource: "Dân Trí", filterRegex: dnHaFilter, limit: 6 }),
-    fetchRssFeed("https://kenh14.vn/doi-song.rss", { defaultSource: "Kenh14", filterRegex: dnHaFilter, limit: 5 }),
-    fetchRssFeed(gNewsUrl, { defaultSource: "Google News", limit: 6 })
+  const gDaNangUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
+    '"Đà Nẵng" (du lịch OR sự kiện OR lễ hội OR thời sự OR giao thông OR pháo hoa) when:14d'
+  )}&hl=vi&gl=VN&ceid=VN:vi`;
+
+  const gHoiAnUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
+    '"Hội An" (phố cổ OR du lịch OR văn hóa OR lễ hội OR sự kiện OR ẩm thực) when:14d'
+  )}&hl=vi&gl=VN&ceid=VN:vi`;
+
+  const gYouthUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
+    '("Đà Nẵng" OR "Hội An") ("giới trẻ" OR "cuối tuần" OR "concert" OR "chợ đêm" OR "cà phê" OR "biển") when:14d'
+  )}&hl=vi&gl=VN&ceid=VN:vi`;
+
+  const newsWikiKeys = [
+    "Đà Nẵng",
+    "Hội An",
+    "Cầu Rồng",
+    "Chùa Cầu",
+    "Bà Nà",
+    "Bán đảo Sơn Trà",
+    "Cù lao Chàm"
+  ];
+
+  const [newsPhotoMap, ...settled] = await Promise.all([
+    fetchWikiPhotoMap(newsWikiKeys),
+    ...[
+      fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://vnexpress.net/rss/thoi-su.rss", { defaultSource: "VnExpress", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://vnexpress.net/rss/doi-song.rss", { defaultSource: "VnExpress", filterRegex: dnHaFilter, limit: 6 }),
+      fetchRssFeed("https://tuoitre.vn/rss/du-lich.rss", { defaultSource: "Tuổi Trẻ", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://tuoitre.vn/rss/thoi-su.rss", { defaultSource: "Tuổi Trẻ", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://tuoitre.vn/rss/nhip-song-tre.rss", { defaultSource: "Tuổi Trẻ", filterRegex: dnHaFilter, limit: 6 }),
+      fetchRssFeed("https://thanhnien.vn/rss/du-lich.rss", { defaultSource: "Thanh Niên", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://thanhnien.vn/rss/thoi-su.rss", { defaultSource: "Thanh Niên", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://dantri.com.vn/rss/du-lich.rss", { defaultSource: "Dân Trí", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://dantri.com.vn/rss/xa-hoi.rss", { defaultSource: "Dân Trí", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://vietnamnet.vn/rss/du-lich.rss", { defaultSource: "VietNamNet", filterRegex: dnHaFilter, limit: 8 }),
+      fetchRssFeed("https://vietnamnet.vn/rss/thoi-su.rss", { defaultSource: "VietNamNet", filterRegex: dnHaFilter, limit: 6 }),
+      fetchRssFeed("https://kenh14.vn/doi-song.rss", { defaultSource: "Kenh14", filterRegex: dnHaFilter, limit: 6 }),
+      fetchRssFeed("https://kenh14.vn/an-quay-di.rss", { defaultSource: "Kenh14", filterRegex: dnHaFilter, limit: 6 }),
+      fetchRssFeed(gDaNangUrl, { defaultSource: "Google News", limit: 16 }),
+      fetchRssFeed(gHoiAnUrl, { defaultSource: "Google News", limit: 16 }),
+      fetchRssFeed(gYouthUrl, { defaultSource: "Google News", limit: 12 })
+    ].map((p) =>
+      p.then((value) => ({ status: "fulfilled", value })).catch(() => ({ status: "rejected", value: [] }))
+    )
   ]);
 
-  const items = settled
-    .filter((r) => r.status === "fulfilled")
-    .flatMap((r) => r.value);
+  function pickNewsFallbackPhoto(text) {
+    const t = String(text || "").toLowerCase();
+    if (/bà nà|cầu vàng/.test(t)) return newsPhotoMap["Bà Nà"] || newsPhotoMap["Đà Nẵng"] || "";
+    if (/sơn trà|linh ứng/.test(t)) return newsPhotoMap["Bán đảo Sơn Trà"] || newsPhotoMap["Đà Nẵng"] || "";
+    if (/cù lao chàm/.test(t)) return newsPhotoMap["Cù lao Chàm"] || newsPhotoMap["Hội An"] || "";
+    if (/chùa cầu|phố cổ|hội an|quảng nam/.test(t)) return newsPhotoMap["Chùa Cầu"] || newsPhotoMap["Hội An"] || "";
+    if (/cầu rồng|sông hàn|pháo hoa/.test(t)) return newsPhotoMap["Cầu Rồng"] || newsPhotoMap["Đà Nẵng"] || "";
+    return newsPhotoMap["Đà Nẵng"] || newsPhotoMap["Hội An"] || "";
+  }
 
-  if (items.filter((x) => x.image).length < 4) {
+  let items = settled
+    .filter((r) => r.status === "fulfilled")
+    .flatMap((r) => r.value)
+    .map((item) => ({
+      ...item,
+      image: item.image || pickNewsFallbackPhoto(`${item.title} ${item.subtitle}`)
+    }));
+
+  // Nếu nguồn lọc hẹp ít hơn 35 bài, bổ sung thêm tin Du lịch & Đời sống nổi bật có ảnh
+  if (items.length < 35) {
     const extra = await Promise.allSettled([
-      fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress", limit: 6 }),
-      fetchRssFeed("https://tuoitre.vn/rss/du-lich.rss", { defaultSource: "Tuổi Trẻ", limit: 6 })
+      fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress", limit: 12 }),
+      fetchRssFeed("https://tuoitre.vn/rss/du-lich.rss", { defaultSource: "Tuổi Trẻ", limit: 12 }),
+      fetchRssFeed("https://thanhnien.vn/rss/du-lich.rss", { defaultSource: "Thanh Niên", limit: 10 })
     ]);
     items.push(...extra.filter((r) => r.status === "fulfilled").flatMap((r) => r.value));
   }
 
-  return dedupeAndSortWithImages(items, 12);
+  return dedupeAndSortWithImages(items, 45);
 }
+
 
 // ==========================================
 // TAB 2: FOOD & DRINKS — VOUCHER/MÓN MỚI CHUỖI F&B & MINIMART + ĐỘC ĐÁO HỘI AN
