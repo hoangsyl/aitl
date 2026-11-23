@@ -1,3 +1,8 @@
+/**
+ * AIvolution Team - High Concurrency & Auto-Verify Client
+ * Bản quyền thuộc về AIvolution Team
+ */
+
 const HISTORY_KEY = "aivolution_scan_history_v1";
 const TOTAL_SCANS_KEY = "aivolution_total_scans_v1";
 const THEME_KEY = "aivolution_theme_v1";
@@ -42,8 +47,11 @@ let currentSpeechText = "";
 let isSpeaking = false;
 let speechSessionId = 0;
 let syncNavGlassFn = null;
+let isScanning = false;
+let isChatSending = false;
+let lastScanData = null;
 
-// Web Audio API + Fallback Audio + Bộ đệm tải sẵn giọng Hoài My
+// Web Audio API + Fallback Audio + Bộ đệm giọng Hoài My
 let audioCtx = null;
 let activeSource = null;
 let activeHtmlAudio = null;
@@ -65,6 +73,60 @@ function escapeHtml(str) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Fetch có timeout + tự thử lại kèm độ trễ ngẫu nhiên (jitter) khi nhiều người quét cùng lúc
+async function fetchApiWithRetry(payload, { timeoutMs = 13500, maxRetries = 1 } = {}) {
+  let lastRes = null;
+  let lastData = null;
+  let lastErr = null;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: controller.signal
+      });
+      clearTimeout(timer);
+
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = { error: FRIENDLY_ERROR_MSG, debug: `HTTP ${res.status}` };
+      }
+
+      lastRes = res;
+      lastData = data;
+
+      if ([429, 502, 503, 504].includes(res.status) && attempt < maxRetries) {
+        const jitter = 600 + Math.floor(Math.random() * 700);
+        await sleep(jitter);
+        continue;
+      }
+      return { res, data };
+    } catch (err) {
+      clearTimeout(timer);
+      lastErr = err;
+      if (attempt < maxRetries) {
+        const jitter = 500 + Math.floor(Math.random() * 600);
+        await sleep(jitter);
+        continue;
+      }
+    }
+  }
+
+  if (lastRes) return { res: lastRes, data: lastData };
+  throw lastErr || new Error("Kết nối máy chủ bị gián đoạn");
 }
 
 // ==========================================
@@ -156,7 +218,7 @@ function navigateTo(viewName) {
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
-    if (confirmDialog.open) {
+    if (confirmDialog && confirmDialog.open) {
       confirmDialog.close();
     } else if (activeView === "detail") {
       navigateTo(previousView || "home");
@@ -244,7 +306,7 @@ function updateHistoryBadge() {
 function parseCalories(str) {
   if (!str) return 0;
   const text = String(str).toLowerCase();
-  if (text.includes("không áp dụng")) return 0;
+  if (/không áp dụng|chưa xác định|chưa đủ dữ liệu|n\/a/.test(text)) return 0;
   const nums = text.match(/\d+/g);
   if (!nums) return 0;
   if (nums.length >= 2) {
@@ -267,9 +329,9 @@ function renderHomeDashboard() {
     const kcal = parseCalories(d.thong_tin_san_pham?.calo_uoc_tinh);
     totalCalories += kcal;
 
-    if (d.la_dia_diem || /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm/.test(type)) {
+    if (d.la_dia_diem || /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm|trường học|tổ chức|thương hiệu/.test(type)) {
       placesCount++;
-    } else if (/thức ăn|đồ uống/.test(type) || kcal > 0) {
+    } else if (/thức ăn|đồ uống|món ăn|nước uống|thực phẩm|bánh|trái cây/.test(type) || kcal > 0) {
       foodCount++;
     } else {
       productCount++;
@@ -306,7 +368,7 @@ function renderHomeDashboard() {
   if (!list.length) {
     container.innerHTML = `
       <div class="empty-card">
-        <p>Chưa có mục nào được quét. Hãy mở máy quét để nhận diện món ăn, địa điểm hoặc sản phẩm quanh bạn.</p>
+        <p>Chưa có mục nào được quét. Hãy mở máy quét để nhận diện món ăn, logo trường học, địa điểm hoặc sản phẩm quanh bạn.</p>
         <button type="button" class="btn-pill btn-primary" id="emptyScanBtn">Mở AI Scanner</button>
       </div>
     `;
@@ -688,7 +750,6 @@ function renderWeatherContent(data, city) {
   const selRainSum = Number((daily.precipitation_sum?.[selIdx] ?? 0).toFixed(1));
   const isDayFlag = isToday ? (cur.is_day ?? 1) : 1;
 
-  // Tóm tắt ngày mưa vs ngày khô ráo trong 7 ngày
   const rainDays = [];
   const dryDays = [];
   dayTimes.forEach((dt, i) => {
@@ -713,7 +774,6 @@ function renderWeatherContent(data, city) {
     minute: "2-digit"
   });
 
-  // Lưới 7 ngày (4 ô hàng trên, 3 ô hàng dưới)
   const daysHtml = dayTimes
     .slice(0, 7)
     .map((dt, i) => {
@@ -749,7 +809,6 @@ function renderWeatherContent(data, city) {
     })
     .join("");
 
-  // Biểu đồ mưa theo giờ (Widget 2)
   const slots = pickHourlyRainSlots(hourly, selDate, isToday);
   const svgW = 360;
   const svgH = 112;
@@ -1032,17 +1091,23 @@ async function renderWeatherView(forceRefresh = false) {
 function renderChatView() {
   const box = document.getElementById("chatBox");
   box.innerHTML = chatHistory
-    .map((m) => `<div class="chat-msg ${m.role === "user" ? "user" : "bot"}">${escapeHtml(m.content)}</div>`)
+    .map(
+      (m) =>
+        `<div class="chat-msg ${m.role === "user" ? "user" : "bot"}">${escapeHtml(m.content).replace(/\n/g, "<br>")}</div>`
+    )
     .join("");
   box.scrollTop = box.scrollHeight;
 }
 
 document.getElementById("chatForm").addEventListener("submit", async (e) => {
   e.preventDefault();
+  if (isChatSending) return;
+
   const input = document.getElementById("chatInput");
   const text = input.value.trim();
   if (!text) return;
 
+  isChatSending = true;
   chatHistory.push({ role: "user", content: text });
   input.value = "";
   renderChatView();
@@ -1056,27 +1121,39 @@ document.getElementById("chatForm").addEventListener("submit", async (e) => {
 
   try {
     const locationContext = currentCoords.lat
-      ? `GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Đà Nẵng & Hội An`
-      : "Đà Nẵng – Hội An";
+      ? `GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Hội An & Đà Nẵng`
+      : "Hội An – Đà Nẵng";
 
-    const res = await fetch("/api/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ mode: "chat", messages: chatHistory, locationContext })
-    });
-    const data = await res.json();
+    // Tự động gửi kèm đối tượng vừa quét gần nhất để Trợ lý hiểu ngữ cảnh
+    const latestScan = lastScanData || loadHistory()[0]?.data || null;
+
+    const { data } = await fetchApiWithRetry(
+      {
+        mode: "chat",
+        messages: chatHistory.slice(-10),
+        locationContext,
+        lastScan: latestScan
+      },
+      { timeoutMs: 11000, maxRetries: 1 }
+    );
+
     chatHistory.push({
       role: "assistant",
       content: data.reply || data.error || "Mình chưa nhận được phản hồi, bạn thử lại nhé."
     });
   } catch (err) {
-    chatHistory.push({ role: "assistant", content: "Lỗi kết nối: " + err.message });
+    chatHistory.push({
+      role: "assistant",
+      content: "Lỗi kết nối: " + (err?.message || "Mạng không ổn định")
+    });
+  } finally {
+    isChatSending = false;
+    renderChatView();
   }
-  renderChatView();
 });
 
 // ==========================================
-// 5. GIỌNG ĐỌC HOÀI MY NEURAL (CHỐNG TREO KHI THOÁT TAB)
+// 5. GIỌNG ĐỌC HOÀI MY NEURAL (CHỈ TẢI KHI BẤM – GIẢM 50% TẢI SERVER)
 // ==========================================
 function normalizeTtsText(text) {
   return String(text || "").replace(/[*#_•]/g, " ").replace(/\s+/g, " ").trim();
@@ -1113,11 +1190,6 @@ function getOrFetchTtsBuffer(cleanText) {
   }
   ttsBufferCache.set(cleanText, promise);
   return promise;
-}
-
-function prefetchTts(text) {
-  const cleanText = normalizeTtsText(text);
-  if (cleanText) getOrFetchTtsBuffer(cleanText).catch(() => {});
 }
 
 function resetAudioContext() {
@@ -1289,7 +1361,7 @@ async function speakText(text) {
 }
 
 // ==========================================
-// 6. QUÉT ẢNH & HIỂN THỊ MÀN HÌNH CHI TIẾT
+// 6. QUÉT ẢNH TỐC ĐỘ CAO & HIỂN THỊ MÀN HÌNH CHI TIẾT
 // ==========================================
 function makeThumbnail(sourceCanvas) {
   try {
@@ -1305,45 +1377,60 @@ function makeThumbnail(sourceCanvas) {
   }
 }
 
+function setScanningLock(locked) {
+  isScanning = locked;
+  statusPill.classList.toggle("show", locked);
+  const captureBtn = document.getElementById("captureBtn");
+  const uploadBtn = document.getElementById("uploadBtn");
+  if (captureBtn) captureBtn.disabled = locked;
+  if (uploadBtn) uploadBtn.disabled = locked;
+}
+
 async function scanBase64(imageBase64, thumbDataUrl) {
+  if (isScanning) return;
   const startTime = performance.now();
-  statusPill.classList.add("show");
+  setScanningLock(true);
 
   try {
     const modeHint = scanMode === "food"
-      ? "Ưu tiên phân tích món ăn & calo. "
+      ? "Ưu tiên đong đếm calo từ nhãn hoặc nguyên liệu nhìn thấy rõ, tuyệt đối không bịa số. "
       : scanMode === "place"
-      ? "Ưu tiên nhận diện địa điểm / di tích. "
+      ? "Ưu tiên nhận diện chính xác địa điểm, logo trường học, thương hiệu, di tích. "
       : "";
 
     const locationContext = currentCoords.lat
-      ? `${modeHint}GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Đà Nẵng & Hội An`
-      : `${modeHint}Đà Nẵng – Hội An`;
+      ? `${modeHint}GPS(${currentCoords.lat.toFixed(4)}, ${currentCoords.lng.toFixed(4)}) - Hội An & Đà Nẵng`
+      : `${modeHint}Hội An – Đà Nẵng`;
 
-    const res = await fetch("/api/scan", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const { res, data } = await fetchApiWithRetry(
+      {
         imageBase64,
+        scanMode,
         lat: currentCoords.lat,
         lng: currentCoords.lng,
         locationContext
-      })
-    });
+      },
+      { timeoutMs: 14000, maxRetries: 1 }
+    );
 
-    const data = await res.json();
     const elapsed = ((performance.now() - startTime) / 1000).toFixed(1);
 
     if (!res.ok || data.error) {
       renderErrorDetail(data.debug || "", thumbDataUrl);
     } else {
+      lastScanData = data;
       addToHistory(data, thumbDataUrl);
       renderDetailView(data, `${elapsed}s`, thumbDataUrl, false);
     }
   } catch (err) {
-    renderErrorDetail(err?.message || "Lỗi kết nối mạng", thumbDataUrl);
+    renderErrorDetail(
+      err?.name === "AbortError"
+        ? "Quá thời gian phản hồi, bạn thử bấm Quét lại nhé"
+        : (err?.message || "Lỗi kết nối mạng"),
+      thumbDataUrl
+    );
   } finally {
-    statusPill.classList.remove("show");
+    setScanningLock(false);
   }
 }
 
@@ -1381,22 +1468,42 @@ function renderErrorDetail(debugMsg, thumbDataUrl) {
   document.getElementById("errRetryBtn").addEventListener("click", () => navigateTo("scanner"));
 }
 
+function getShortHealthStatus(healthText, isFood) {
+  if (!isFood) return "N/A";
+  const t = String(healthText || "").toLowerCase();
+  if (/hạn chế|nhiều đường|nhiều dầu|calo cao|không tốt|cân nhắc/.test(t)) return "Vừa phải";
+  if (/không áp dụng|chưa rõ|chưa đủ dữ liệu/.test(t)) return "N/A";
+  return "Tốt";
+}
+
 function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
   stopCamera();
   setDetailHero(thumbDataUrl);
+  lastScanData = data;
 
   currentSpeechText = `${data.ten_dia_diem || ""}. ${data.cau_chuyen_lich_su || ""} ${data.giai_thoai_dac_biet || ""}`;
-  prefetchTts(currentSpeechText);
 
   const sp = data.thong_tin_san_pham;
+  const loaiLower = String(data.loai_doi_tuong || "").toLowerCase();
+  const isFoodOrDrink = /thức ăn|đồ uống|món ăn|nước uống|thực phẩm|bánh|trái cây/.test(loaiLower);
   const kcalNum = parseCalories(sp?.calo_uoc_tinh);
-  const highlightText = sp?.hien_thi && sp.calo_uoc_tinh
-    ? `🔥Ước tính calo: ${sp.calo_uoc_tinh}`
-    : (data.dia_chi || "Đà Nẵng – Hội An");
 
-  const providerBadge = data._provider
+  const hasValidAddress = data.dia_chi && !/không áp dụng|chưa xác định/i.test(data.dia_chi);
+  const highlightText = isFoodOrDrink && sp?.calo_uoc_tinh
+    ? `🔥 Calo: ${sp.calo_uoc_tinh}`
+    : (hasValidAddress ? `📍 ${data.dia_chi}` : "Đà Nẵng – Hội An");
+
+  const providerBadge = data._cached
+    ? " • FAST CACHE"
+    : data._provider
     ? ` • ${escapeHtml(String(data._provider).split(":")[0].toUpperCase())}`
     : "";
+
+  const verifiedPill = data._verified
+    ? `<span class="pill-tag accent">✓ Đã xác thực</span>`
+    : "";
+
+  const healthLabel = getShortHealthStatus(sp?.tot_cho_suc_khoe, isFoodOrDrink);
 
   const ringBlock = sp && sp.hien_thi ? `
     <div class="ring-grid">
@@ -1405,19 +1512,19 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
         <div class="ring-mini-wrap">
           <svg class="ring-mini-svg" viewBox="0 0 60 60" aria-hidden="true">
             <circle class="ring-mini-bg" cx="30" cy="30" r="24" />
-            <circle cx="30" cy="30" r="24" fill="none" stroke="#94D82D" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="42" />
+            <circle cx="30" cy="30" r="24" fill="none" stroke="#94D82D" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="${kcalNum > 0 ? 42 : 135}" />
           </svg>
           <span class="ring-mini-val tabular-nums">${kcalNum > 0 ? kcalNum : "N/A"}</span>
         </div>
       </div>
       <div class="ring-tile">
-        <span class="ring-tile-label">Sức khỏe</span>
+        <span class="ring-tile-label">${isFoodOrDrink ? "Dinh dưỡng" : "Xác thực"}</span>
         <div class="ring-mini-wrap">
           <svg class="ring-mini-svg" viewBox="0 0 60 60" aria-hidden="true">
             <circle class="ring-mini-bg" cx="30" cy="30" r="24" />
-            <circle cx="30" cy="30" r="24" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="50" />
+            <circle cx="30" cy="30" r="24" fill="none" stroke="#38BDF8" stroke-width="6" stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="${isFoodOrDrink ? 50 : (data._verified ? 18 : 48)}" />
           </svg>
-          <span class="ring-mini-val">Tốt</span>
+          <span class="ring-mini-val">${isFoodOrDrink ? healthLabel : (data._verified ? "100%" : "AI")}</span>
         </div>
       </div>
       <div class="ring-tile">
@@ -1435,10 +1542,10 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
 
   const productBlock = sp && sp.hien_thi ? `
     <div class="info-block">
-      <h3>🍽️Dinh dưỡng & Nơi mua</h3>
-      <p><strong>Sức khỏe:</strong> ${escapeHtml(sp.tot_cho_suc_khoe || "Đang cập nhật")}</p>
+      <h3>${isFoodOrDrink ? "🍽️ Dinh dưỡng & Định lượng" : "📌 Thông số & Khu vực"}</h3>
+      ${sp.tot_cho_suc_khoe && sp.tot_cho_suc_khoe !== "Không áp dụng" ? `<p><strong>Sức khỏe / Lưu ý:</strong> ${escapeHtml(sp.tot_cho_suc_khoe)}</p>` : ""}
       <p><strong>Chi tiết:</strong> ${escapeHtml(sp.chi_tiet_san_pham || "Đang cập nhật")}</p>
-      <p><strong>Nơi mua gợi ý:</strong> ${escapeHtml(sp.noi_mua_goi_y || "Đà Nẵng – Hội An")}</p>
+      <p><strong>${data.la_dia_diem ? "Địa điểm / Giờ mở cửa" : "Nơi mua gợi ý"}:</strong> ${escapeHtml(sp.noi_mua_goi_y || "Đà Nẵng – Hội An")}</p>
     </div>
   ` : "";
 
@@ -1462,6 +1569,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
   sheet.innerHTML = `
     <div class="detail-pills">
       <span class="pill-tag accent">${escapeHtml(data.loai_doi_tuong || "NHẬN DIỆN")}</span>
+      ${verifiedPill}
       <span class="pill-tag tabular-nums">${escapeHtml(data.nien_dai_hoac_gia || (fromHistory ? timeOrElapsed : "Đà Nẵng – Hội An"))}</span>
     </div>
 
@@ -1475,12 +1583,12 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
     ${ringBlock}
 
     <div class="info-block">
-      <h3>📊Thông tin chi tiết</h3>
+      <h3>📊 Thông tin chi tiết</h3>
       <p>${escapeHtml(data.cau_chuyen_lich_su || "")}</p>
     </div>
 
     <div class="info-block">
-      <h3>✨Điểm độc đáo</h3>
+      <h3>✨ Điểm độc đáo</h3>
       <p>${escapeHtml(data.giai_thoai_dac_biet || "")}</p>
     </div>
 
@@ -1488,7 +1596,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
     ${hanVietBlock}
 
     <div class="info-block">
-      <h3>💬Đánh giá từ người địa phương</h3>
+      <h3>💬 Đánh giá từ người địa phương</h3>
       <p>${escapeHtml(data.danh_gia_ban_dia?.tom_tat || "")}</p>
       ${reviewsHtml}
     </div>
@@ -1505,7 +1613,7 @@ function renderDetailView(data, timeOrElapsed, thumbDataUrl, fromHistory) {
 }
 
 // ==========================================
-// AIvolution
+// SỰ KIỆN GIAO DIỆN
 // ==========================================
 document.querySelectorAll("[data-nav]").forEach((btn) => {
   btn.addEventListener("click", () => navigateTo(btn.dataset.nav));
@@ -1519,7 +1627,7 @@ document.getElementById("detailBackBtn").addEventListener("click", () => navigat
 document.getElementById("detailCloseBtn").addEventListener("click", () => navigateTo("home"));
 
 document.getElementById("btnClearHistory").addEventListener("click", () => {
-  if (typeof confirmDialog.showModal === "function") {
+  if (confirmDialog && typeof confirmDialog.showModal === "function") {
     confirmDialog.showModal();
   } else {
     setTotalScans(0);
@@ -1547,7 +1655,9 @@ document.querySelectorAll(".mode-pill[data-mode]").forEach((btn) => {
   });
 });
 
-document.getElementById("uploadBtn").addEventListener("click", () => fileInput.click());
+document.getElementById("uploadBtn").addEventListener("click", () => {
+  if (!isScanning) fileInput.click();
+});
 
 document.getElementById("lastThumbBtn").addEventListener("click", () => {
   const list = loadHistory();
@@ -1564,7 +1674,7 @@ document.getElementById("switchBtn").addEventListener("click", () => {
 });
 
 function prepareScanImage(source, srcW, srcH) {
-  const maxSide = 768;
+  const maxSide = 840;
   const scale = Math.min(1, maxSide / Math.max(srcW, srcH));
   canvas.width = Math.round(srcW * scale);
   canvas.height = Math.round(srcH * scale);
@@ -1575,20 +1685,20 @@ function prepareScanImage(source, srcW, srcH) {
   ctx2d.drawImage(source, 0, 0, canvas.width, canvas.height);
 
   return {
-    base64: canvas.toDataURL("image/jpeg", 0.74).split(",")[1],
+    base64: canvas.toDataURL("image/jpeg", 0.78).split(",")[1],
     thumb: makeThumbnail(canvas)
   };
 }
 
 document.getElementById("captureBtn").addEventListener("click", () => {
-  if (!video || !video.videoWidth) return;
+  if (isScanning || !video || !video.videoWidth) return;
   const { base64, thumb } = prepareScanImage(video, video.videoWidth, video.videoHeight);
   scanBase64(base64, thumb);
 });
 
 fileInput.addEventListener("change", (e) => {
   const file = e.target.files?.[0];
-  if (!file) return;
+  if (!file || isScanning) return;
   const reader = new FileReader();
   reader.onload = () => {
     const img = new Image();
@@ -1609,7 +1719,7 @@ renderHomeDashboard();
 initGPS();
 
 // ==========================================
-// AIvolution Team
+// AIvolution Team - Liquid Glass Bottom Nav
 // ==========================================
 (function initBottomNavLiquidGlass() {
   if (!bottomNav) return;
