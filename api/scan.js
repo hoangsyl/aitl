@@ -386,7 +386,7 @@ LUẬT BẮT BUỘC:
 4. GIÁ & CALO:
    - Giá ("nien_dai_hoac_gia"): Với vật thể/đồ trang trí/sản phẩm/món ăn phổ biến tại Việt Nam, ước lượng khoảng giá bán lẻ thực tế VNĐ (VD: "25.000 - 60.000 VNĐ"). Với trường học/di tích, ghi năm thành lập thật hoặc "Chưa xác định rõ".
    - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi rõ từng phần vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
-5. Đặc sản: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
+5. Đặc sản: Phân biệt chính xác đặc sản Hội An Đà Nẵng 100% không bịa không nhầm
 6. ĐỘ CHI TIẾT & TỐC ĐỘ: Viết giàu thông tin, cụ thể nhưng gọn ý (2–3 câu cho mục chính, 1–2 câu cho mục phụ) để vừa đủ chiều sâu vừa trả về nhanh. CHỈ TRẢ JSON:
 
 {
