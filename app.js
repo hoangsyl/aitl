@@ -1956,7 +1956,7 @@ initGPS();
     }
 
     const featured = items.slice(0, 2);
-    const rest = items.slice(2, 12);
+    const rest = items.slice(2, 40);
     const shortTag = tab === "news" ? "NEWS" : tab === "food" ? "FOOD" : "CHECK-IN";
 
     const featuredHtml = featured
@@ -2197,3 +2197,4 @@ initGPS();
     }
   });
 })();
+
