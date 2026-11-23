@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (TỐC ĐỘ NHANH + CHỊU TẢI 100 USERS)
+// 1. CẤU HÌNH HỆ THỐNG 
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -389,7 +389,7 @@ LUẬT BẮT BUỘC:
    - Giá ("nien_dai_hoac_gia"): Với vật thể/đồ trang trí/sản phẩm/món ăn phổ biến tại Việt Nam, ước lượng khoảng giá bán lẻ thực tế VNĐ (VD: "25.000 - 60.000 VNĐ"). Với trường học/di tích, ghi năm thành lập thật hoặc "Chưa xác định rõ".
    - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi phép cộng vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
 5. Đặc sản: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
-6. Viết súc tích 1 câu/mục để phản hồi nhanh nhất. CHỈ TRẢ JSON:
+6. Viết súc tích 5 câu/mục để phản hồi nhanh nhất. CHỈ TRẢ JSON:
 
 {
   "khong_nhan_dien_duoc": false,
