@@ -1,7 +1,8 @@
 /**
- * AIvolution Team - 100% Free Real-time News, Food & Check-in with Real Cover Photos
- * 0 Token • 0 API Key • CDN Cache 30 phút
- * Nguồn ảnh thật: VnExpress, Tuổi Trẻ, Thanh Niên, Dân Trí, VietNamNet, Wikimedia Geosearch
+ * AIvolution Team - 100% Free Real-time Explore Hub (0 Token • 0 API Key)
+ * - News: Báo lớn Đà Nẵng – Hội An có ảnh bìa thật
+ * - Food & Drinks: Voucher/Món mới (KFC, Dookki, Bách Hóa Xanh, Pikamart, Jollibee, Highlands, Mixue...) + Món độc đáo Hội An
+ * - Check-in: Tọa độ sống ảo Đà Nẵng – Hội An có ảnh thật 640px + bài báo trend
  */
 
 const CACHE_TTL_MS = 30 * 60 * 1000;
@@ -9,7 +10,103 @@ const ramCache = new Map();
 const inFlight = new Map();
 const UA = "Mozilla/5.0 (compatible; AIvolutionBot/1.0; +https://aitl-teal.vercel.app)";
 
-function fetchWithTimeout(url, options = {}, timeoutMs = 3600) {
+// Danh sách món ăn độc đáo nổi tiếng tại Hội An (địa chỉ thật + gắn ảnh tự động từ Wikipedia)
+const HOI_AN_UNIQUE_FOODS = [
+  {
+    title: "Nước Mót Hội An — Trà thảo mộc cánh sen",
+    subtitle: "150 Trần Phú, Phố cổ Hội An • Thức uống thảo mộc sả chanh, gừng, cam thảo giải nhiệt đặc trưng.",
+    badge: "Độc đáo Hội An",
+    meta: "16.000 - 30.000đ",
+    wikiKey: "Trà thảo mộc",
+    address: "150 Trần Phú, Hội An"
+  },
+  {
+    title: "Chè Xí Mà Phủ (Chè mè đen) Ông Thiều",
+    subtitle: "130 Nguyễn Trường Tộ, Hội An • Món chè mè đen nấu cùng vị thuốc bắc gia truyền hơn 70 năm.",
+    badge: "Độc đáo Hội An",
+    meta: "10.000 - 15.000đ",
+    wikiKey: "Chè",
+    address: "130 Nguyễn Trường Tộ, Hội An"
+  },
+  {
+    title: "Bánh Mì Phượng Hội An",
+    subtitle: "2B Phan Chu Trinh, Hội An • Vỏ giòn rụm, xốt gia truyền với nhân xá xíu, pate, thịt nướng.",
+    badge: "Nổi tiếng Hội An",
+    meta: "25.000 - 45.000đ",
+    wikiKey: "Bánh mì Việt Nam",
+    address: "2B Phan Chu Trinh, Hội An"
+  },
+  {
+    title: "Bánh Mì Madam Khánh (The Bánh Mì Queen)",
+    subtitle: "115 Trần Cao Vân, Hội An • Nhân thập cẩm hài hòa, nộm đu đủ giòn và nước xốt béo thơm.",
+    badge: "Nổi tiếng Hội An",
+    meta: "25.000 - 40.000đ",
+    wikiKey: "Bánh mì Việt Nam",
+    address: "115 Trần Cao Vân, Hội An"
+  },
+  {
+    title: "Cao Lầu Thanh — Chuẩn vị phố cổ",
+    subtitle: "26 Thái Phiên, Hội An • Sợi mì vàng dai giòn, thịt xá xíu mềm, da heo chiên và rau Trà Quế.",
+    badge: "Đặc sản Hội An",
+    meta: "30.000 - 45.000đ",
+    wikiKey: "Cao lầu",
+    address: "26 Thái Phiên, Hội An"
+  },
+  {
+    title: "Cơm Gà Bà Buội Hội An",
+    subtitle: "22 Phan Chu Trinh, Hội An • Cơm nấu nước luộc gà vàng tơi, gà ta xé phay trộn hành tây rau răm.",
+    badge: "Đặc sản Hội An",
+    meta: "35.000 - 55.000đ",
+    wikiKey: "Cơm gà",
+    address: "22 Phan Chu Trinh, Hội An"
+  },
+  {
+    title: "Bánh Đập – Hến Xào Cẩm Nam",
+    subtitle: "Lương Như Bích, Cẩm Nam, Hội An • Bánh tráng nướng kẹp bánh ướt chấm mắm nêm ăn cùng hến xào.",
+    badge: "Độc đáo Hội An",
+    meta: "25.000 - 50.000đ",
+    wikiKey: "Mì Quảng",
+    address: "Cẩm Nam, Hội An"
+  }
+];
+
+// Danh sách chuỗi F&B & Minimart phổ biến để người dùng tra nhanh ưu đãi / chi nhánh gần nhất
+const CHAIN_QUICK_HUB = [
+  {
+    title: "KFC Việt Nam — Combo gà rán & Ưu đãi tuần này",
+    subtitle: "Tìm chi nhánh KFC gần nhất Đà Nẵng – Hội An • Bấm AI để hỏi combo giảm giá & món mới.",
+    badge: "Chuỗi KFC",
+    meta: "Voucher & Combo",
+    wikiKey: "Gà rán",
+    mapsQuery: "KFC Đà Nẵng Hội An"
+  },
+  {
+    title: "Dookki — Buffet Tokbokki & Phô mai kéo sợi",
+    subtitle: "Tìm chi nhánh Dookki gần nhất tại Đà Nẵng • Bấm AI để hỏi giá vé, ưu đãi học sinh/sinh viên.",
+    badge: "Chuỗi Dookki",
+    meta: "Buffet Hot Trend",
+    wikiKey: "Tteokbokki",
+    mapsQuery: "Dookki Đà Nẵng"
+  },
+  {
+    title: "Bách Hóa Xanh — Deal đồ ăn vặt, nước uống & khuyến mãi",
+    subtitle: "Tìm cửa hàng Bách Hóa Xanh gần bạn tại Hội An – Đà Nẵng • Săn hàng giảm giá mỗi ngày.",
+    badge: "Bách Hóa Xanh",
+    meta: "Siêu thị Mini",
+    wikiKey: "Siêu thị",
+    mapsQuery: "Bách Hóa Xanh Hội An Đà Nẵng"
+  },
+  {
+    title: "Pikamart & Minimart — Đồ ăn nhanh, snack & nước giải khát",
+    subtitle: "Tìm Pikamart / cửa hàng tiện lợi gần nhất quanh khu vực Hội An – Đà Nẵng.",
+    badge: "Minimart • Pikamart",
+    meta: "Tiện lợi 24/7",
+    wikiKey: "Cửa hàng tiện lợi",
+    mapsQuery: "Pikamart minimart Hội An Đà Nẵng"
+  }
+];
+
+function fetchWithTimeout(url, options = {}, timeoutMs = 3400) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(url, {
@@ -91,8 +188,8 @@ function extractImageFromRssBlock(block, decodedDesc) {
   return "";
 }
 
-async function fetchRssFeed(url, { defaultSource = "Tin tức", filterRegex = null, limit = 8 } = {}) {
-  const res = await fetchWithTimeout(url, {}, 3500);
+async function fetchRssFeed(url, { defaultSource = "Tin tức", filterRegex = null, limit = 8, badgePrefix = "" } = {}) {
+  const res = await fetchWithTimeout(url, {}, 3400);
   if (!res.ok) throw new Error(`RSS HTTP ${res.status}`);
   const xml = await res.text();
 
@@ -129,7 +226,7 @@ async function fetchRssFeed(url, { defaultSource = "Tin tức", filterRegex = nu
       type: "news",
       title,
       subtitle: snippet && snippet !== title ? snippet : `Cập nhật mới nhất từ ${source}.`,
-      badge: source,
+      badge: badgePrefix ? `${badgePrefix} • ${source}` : source,
       meta: formatRelativeVnDate(stripTags(rawDate)),
       image,
       url: link
@@ -139,54 +236,51 @@ async function fetchRssFeed(url, { defaultSource = "Tin tức", filterRegex = nu
   return items;
 }
 
-// Tự lấy ảnh og:image từ trang báo gốc cho bài chưa có ảnh (chạy song song tối đa 1.4s)
-async function enrichMissingOgImages(items, maxFetch = 4) {
-  const targets = items
-    .filter((i) => !i.image && i.url && !/news\.google\.com|google\.com\/maps/i.test(i.url))
-    .slice(0, maxFetch);
+// Lấy bản đồ ảnh thật 640px từ Wikipedia Tiếng Việt cho món ăn & chuỗi F&B (0 token)
+async function fetchWikiPhotoMap(titles) {
+  const map = Object.create(null);
+  try {
+    const url =
+      `https://vi.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(titles.join("|"))}` +
+      `&prop=pageimages&piprop=thumbnail&pithumbsize=640&redirects=1&format=json`;
+    const res = await fetchWithTimeout(url, {}, 2600);
+    if (!res.ok) return map;
+    const data = await res.json();
 
-  if (!targets.length) return items;
+    const normMap = Object.create(null);
+    (data.query?.normalized || []).forEach((n) => { normMap[n.to] = n.from; });
+    const redirMap = Object.create(null);
+    (data.query?.redirects || []).forEach((r) => { redirMap[r.to] = r.from; });
 
-  await Promise.allSettled(
-    targets.map(async (item) => {
-      try {
-        const res = await fetchWithTimeout(item.url, {}, 1400);
-        if (!res.ok) return;
-        const html = (await res.text()).slice(0, 28000);
-        const ogMatch =
-          html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i) ||
-          html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image["']/i) ||
-          html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i);
-        if (ogMatch) {
-          const clean = sanitizeImgUrl(ogMatch[1]);
-          if (clean) item.image = clean;
-        }
-      } catch (_) {}
-    })
-  );
-  return items;
+    Object.values(data.query?.pages || {}).forEach((p) => {
+      const img = sanitizeImgUrl(p.thumbnail?.source || "");
+      if (!img) return;
+      map[p.title] = img;
+      if (redirMap[p.title]) map[redirMap[p.title]] = img;
+      if (normMap[p.title]) map[normMap[p.title]] = img;
+    });
+  } catch (_) {}
+  return map;
 }
 
-function dedupeAndSortWithImages(list, maxItems = 12) {
-  const seen = new Set();
-  const unique = list.filter((item) => {
-    const k = String(item.title || "").toLowerCase().replace(/[^a-z0-9à-ỹ]/gi, "").slice(0, 36);
-    if (!k || seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-
-  // Luôn đưa bài có ảnh thật lên đầu để giao diện báo chí nổi bật nhất
-  const withImg = unique.filter((x) => Boolean(x.image));
-  const noImg = unique.filter((x) => !x.image);
-  return [...withImg, ...noImg].slice(0, maxItems);
+function pickTopicPhotoFromMap(text, photoMap) {
+  const t = String(text || "").toLowerCase();
+  if (/kfc|jollibee|lotteria|gà rán|burger|mcdonald|popeyes/.test(t)) return photoMap["Gà rán"] || "";
+  if (/dookki|doki|tokbokki|lẩu|hàn quốc/.test(t)) return photoMap["Tteokbokki"] || "";
+  if (/bách hóa xanh|winmart|pikamart|minimart|gs25|circle k|siêu thị/.test(t)) return photoMap["Siêu thị"] || photoMap["Cửa hàng tiện lợi"] || "";
+  if (/highlands|phúc long|katinat|mixue|trà sữa|cà phê|coffee/.test(t)) return photoMap["Cà phê sữa đá"] || photoMap["Trà sữa trân châu"] || "";
+  if (/bánh mì/.test(t)) return photoMap["Bánh mì Việt Nam"] || "";
+  if (/cao lầu/.test(t)) return photoMap["Cao lầu"] || "";
+  if (/mì quảng/.test(t)) return photoMap["Mì Quảng"] || "";
+  if (/cơm gà/.test(t)) return photoMap["Cơm gà"] || "";
+  if (/chè|mót|trà thảo mộc/.test(t)) return photoMap["Chè"] || photoMap["Trà thảo mộc"] || "";
+  return photoMap["Bánh mì Việt Nam"] || photoMap["Cao lầu"] || "";
 }
 
-// Lấy ảnh thật độ phân giải 640px từ Wikipedia Tiếng Việt theo tọa độ hoặc danh sách chủ đề
 async function fetchWikiGeosearch(lat, lng, cityName) {
   const url =
     `https://vi.wikipedia.org/w/api.php?action=query&generator=geosearch` +
-    `&ggscoord=${lat}|${lng}&ggsradius=10000&ggslimit=14` +
+    `&ggscoord=${lat}|${lng}&ggsradius=10000&ggslimit=16` +
     `&prop=pageimages|extracts&piprop=thumbnail&pithumbsize=640` +
     `&exintro=1&explaintext=1&exsentences=1&format=json`;
 
@@ -202,52 +296,32 @@ async function fetchWikiGeosearch(lat, lng, cityName) {
     .map((p) => ({
       type: "place",
       title: p.title,
-      subtitle: p.extract ? p.extract.slice(0, 125) : `Điểm check-in nổi tiếng tại ${cityName}.`,
+      subtitle: p.extract ? p.extract.slice(0, 125) : `Tọa độ check-in nổi bật tại ${cityName}.`,
       badge: `Check-in ${cityName}`,
       meta: "Tọa độ hot",
       image: sanitizeImgUrl(p.thumbnail.source),
       url: buildMapsPlaceUrl(p.title, cityName)
     }))
     .filter((x) => x.image)
-    .slice(0, 6);
+    .slice(0, 7);
 }
 
-async function fetchWikiFoodGallery() {
-  const titles = [
-    "Cao lầu",
-    "Mì Quảng",
-    "Bánh mì Việt Nam",
-    "Bánh xèo",
-    "Bún chả cá",
-    "Bánh tráng cuốn thịt heo"
-  ].join("|");
+function dedupeAndSortWithImages(list, maxItems = 12) {
+  const seen = new Set();
+  const unique = list.filter((item) => {
+    const k = String(item.title || "").toLowerCase().replace(/[^a-z0-9à-ỹ]/gi, "").slice(0, 36);
+    if (!k || seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
 
-  const url =
-    `https://vi.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(titles)}` +
-    `&prop=pageimages|extracts&piprop=thumbnail&pithumbsize=640` +
-    `&exintro=1&explaintext=1&exsentences=1&format=json`;
-
-  const res = await fetchWithTimeout(url, {}, 2800);
-  if (!res.ok) throw new Error(`WikiFood HTTP ${res.status}`);
-  const data = await res.json();
-  const pages = Object.values(data.query?.pages || {});
-
-  return pages
-    .filter((p) => p.title && p.thumbnail?.source)
-    .map((p) => ({
-      type: "place",
-      title: `${p.title} — Đà Nẵng & Hội An`,
-      subtitle: p.extract ? p.extract.slice(0, 125) : "Món đặc sản đường phố nổi tiếng tại Đà Nẵng – Hội An.",
-      badge: "Ẩm thực bản địa",
-      meta: "Tìm quán ngon gần đây",
-      image: sanitizeImgUrl(p.thumbnail.source),
-      url: buildMapsPlaceUrl(`${p.title} ngon`, "Đà Nẵng - Hội An")
-    }))
-    .filter((x) => x.image);
+  const withImg = unique.filter((x) => Boolean(x.image));
+  const noImg = unique.filter((x) => !x.image);
+  return [...withImg, ...noImg].slice(0, maxItems);
 }
 
 // ==========================================
-// TAB 1: NEWS THỜI GIAN THỰC ĐÀ NẴNG – HỘI AN (NHIỀU BÁO LỚN CÓ ẢNH)
+// TAB 1: NEWS THỜI GIAN THỰC ĐÀ NẴNG – HỘI AN (LUÔN ƯU TIÊN BÀI CÓ ẢNH)
 // ==========================================
 async function getFreeRealtimeNews() {
   const dnHaFilter = /đà nẵng|hội an|quảng nam|cầu rồng|sơn trà|bà nà|mỹ khê|cù lao chàm|miền trung/i;
@@ -260,15 +334,14 @@ async function getFreeRealtimeNews() {
     fetchRssFeed("https://tuoitre.vn/rss/thoi-su.rss", { defaultSource: "Tuổi Trẻ", filterRegex: dnHaFilter, limit: 5 }),
     fetchRssFeed("https://thanhnien.vn/rss/du-lich.rss", { defaultSource: "Thanh Niên", filterRegex: dnHaFilter, limit: 6 }),
     fetchRssFeed("https://dantri.com.vn/rss/du-lich.rss", { defaultSource: "Dân Trí", filterRegex: dnHaFilter, limit: 6 }),
-    fetchRssFeed("https://vietnamnet.vn/rss/du-lich.rss", { defaultSource: "VietNamNet", filterRegex: dnHaFilter, limit: 5 }),
-    fetchRssFeed(gNewsUrl, { defaultSource: "Google News", limit: 8 })
+    fetchRssFeed("https://kenh14.vn/doi-song.rss", { defaultSource: "Kenh14", filterRegex: dnHaFilter, limit: 5 }),
+    fetchRssFeed(gNewsUrl, { defaultSource: "Google News", limit: 6 })
   ]);
 
-  let items = settled
+  const items = settled
     .filter((r) => r.status === "fulfilled")
     .flatMap((r) => r.value);
 
-  // Nếu ít hơn 6 tin lọc hẹp theo khu vực, bổ sung thêm tin Du lịch nổi bật Việt Nam có ảnh đẹp
   if (items.filter((x) => x.image).length < 4) {
     const extra = await Promise.allSettled([
       fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress", limit: 6 }),
@@ -277,58 +350,114 @@ async function getFreeRealtimeNews() {
     items.push(...extra.filter((r) => r.status === "fulfilled").flatMap((r) => r.value));
   }
 
-  items = await enrichMissingOgImages(items, 4);
   return dedupeAndSortWithImages(items, 12);
 }
 
 // ==========================================
-// TAB 2: FOOD & DRINKS ĐƯỜNG PHỐ HOT (BÁO ẨM THỰC CÓ ẢNH + ĐẶC SẢN)
+// TAB 2: FOOD & DRINKS — VOUCHER/MÓN MỚI CHUỖI F&B & MINIMART + ĐỘC ĐÁO HỘI AN
 // ==========================================
 async function getFreeTrendingFood() {
-  const dnFoodFilter = /đà nẵng|hội an|quảng nam|miền trung|mì quảng|cao lầu|bánh mì|bánh xèo|ốc|chè|cà phê|ăn vặt|ẩm thực|quán ngon|đường phố|trà sữa/i;
-  const gFoodUrl = `https://news.google.com/rss/search?q=${encodeURIComponent('("Đà Nẵng" OR "Hội An") ("ăn vặt" OR "ẩm thực đường phố" OR "quán ngon" OR "cà phê") when:30d')}&hl=vi&gl=VN&ceid=VN:vi`;
+  const chainNewsQuery =
+    '("KFC" OR "Dookki" OR "Jollibee" OR "Lotteria" OR "Bách Hóa Xanh" OR "Pikamart" OR "WinMart" OR "Highlands Coffee" OR "Phúc Long" OR "Mixue") ' +
+    '("khuyến mãi" OR "voucher" OR "giảm giá" OR "món mới" OR "combo" OR "ưu đãi") when:30d';
 
-  const settled = await Promise.allSettled([
-    fetchRssFeed("https://thanhnien.vn/rss/am-thuc.rss", { defaultSource: "Thanh Niên Ẩm thực", filterRegex: dnFoodFilter, limit: 6 }),
-    fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress Ẩm thực", filterRegex: dnFoodFilter, limit: 6 }),
-    fetchRssFeed("https://tuoitre.vn/rss/du-lich.rss", { defaultSource: "Tuổi Trẻ Ẩm thực", filterRegex: dnFoodFilter, limit: 6 }),
-    fetchRssFeed("https://dantri.com.vn/rss/du-lich.rss", { defaultSource: "Dân Trí", filterRegex: dnFoodFilter, limit: 5 }),
-    fetchWikiFoodGallery(),
-    fetchRssFeed(gFoodUrl, { defaultSource: "Ẩm thực Hot", limit: 6 })
+  const gChainUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(chainNewsQuery)}&hl=vi&gl=VN&ceid=VN:vi`;
+  const chainOrFoodRegex = /kfc|dookki|jollibee|lotteria|bách hóa xanh|pikamart|winmart|highlands|phúc long|mixue|katinat|minimart|khuyến mãi|giảm giá|món mới|hội an|đà nẵng|ẩm thực|ăn vặt|trà sữa/i;
+
+  const wikiKeys = [
+    "Gà rán",
+    "Tteokbokki",
+    "Siêu thị",
+    "Cửa hàng tiện lợi",
+    "Cà phê sữa đá",
+    "Trà sữa trân châu",
+    "Trà thảo mộc",
+    "Chè",
+    "Bánh mì Việt Nam",
+    "Cao lầu",
+    "Cơm gà",
+    "Mì Quảng"
+  ];
+
+  const [photoMap, ...rssSettled] = await Promise.all([
+    fetchWikiPhotoMap(wikiKeys),
+    ...([
+      fetchRssFeed("https://kenh14.vn/an-quay-di.rss", { defaultSource: "Kenh14", filterRegex: chainOrFoodRegex, limit: 6 }),
+      fetchRssFeed("https://thanhnien.vn/rss/am-thuc.rss", { defaultSource: "Thanh Niên", filterRegex: chainOrFoodRegex, limit: 6 }),
+      fetchRssFeed("https://vnexpress.net/rss/kinh-doanh.rss", { defaultSource: "VnExpress", filterRegex: /kfc|jollibee|lotteria|dookki|bách hóa xanh|winmart|highlands|phúc long|mixue/i, limit: 4 }),
+      fetchRssFeed(gChainUrl, { defaultSource: "Deal & Món mới", limit: 8, badgePrefix: "Ưu đãi" })
+    ].map((p) => p.then((value) => ({ status: "fulfilled", value })).catch(() => ({ status: "rejected", value: [] }))))
   ]);
 
-  let items = settled
+  // 1. Gắn ảnh thật cho tin voucher/món mới từ các chuỗi
+  const liveChainNews = rssSettled
     .filter((r) => r.status === "fulfilled")
-    .flatMap((r) => r.value);
+    .flatMap((r) => r.value)
+    .map((item) => ({
+      ...item,
+      image: item.image || pickTopicPhotoFromMap(`${item.title} ${item.subtitle}`, photoMap)
+    }));
 
-  items = await enrichMissingOgImages(items, 4);
-  return dedupeAndSortWithImages(items, 12);
+  // 2. Tạo thẻ địa chỉ món ăn độc đáo Hội An (có ảnh thật + Chỉ đường Maps)
+  const hoiAnCards = HOI_AN_UNIQUE_FOODS.map((spot) => ({
+    type: "place",
+    title: spot.title,
+    subtitle: spot.subtitle,
+    badge: spot.badge,
+    meta: spot.meta,
+    image: photoMap[spot.wikiKey] || pickTopicPhotoFromMap(spot.title, photoMap),
+    url: buildMapsPlaceUrl(spot.title.split("—")[0].trim(), spot.address)
+  }));
+
+  // 3. Tạo thẻ tra nhanh chuỗi KFC, Dookki, Bách Hóa Xanh, Pikamart
+  const chainCards = CHAIN_QUICK_HUB.map((c) => ({
+    type: "place",
+    title: c.title,
+    subtitle: c.subtitle,
+    badge: c.badge,
+    meta: c.meta,
+    image: photoMap[c.wikiKey] || pickTopicPhotoFromMap(c.title, photoMap),
+    url: buildMapsPlaceUrl(c.mapsQuery)
+  }));
+
+  // Bố cục cân bằng:
+  // - 2 thẻ Featured đầu: 1 tin Deal/Món mới từ chuỗi + 1 món độc đáo Hội An
+  // - Danh sách bên dưới: Xen kẽ tin khuyến mãi chuỗi + địa chỉ KFC/Dookki/BHX/Pikamart + đặc sản Hội An
+  const mixed = [];
+  const topNews = liveChainNews.slice(0, 5);
+  const maxLen = Math.max(topNews.length, hoiAnCards.length, chainCards.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (topNews[i]) mixed.push(topNews[i]);
+    if (hoiAnCards[i]) mixed.push(hoiAnCards[i]);
+    if (chainCards[i]) mixed.push(chainCards[i]);
+  }
+
+  return dedupeAndSortWithImages(mixed, 14);
 }
 
 // ==========================================
-// TAB 3: LOCATION CHECK-IN SỐNG ẢO (ẢNH THẬT HỘI AN – ĐÀ NẴNG + BÁO TREND)
+// TAB 3: LOCATION CHECK-IN SỐNG ẢO (LUÔN CÓ ẢNH THẬT HỘI AN & ĐÀ NẴNG)
 // ==========================================
 async function getFreeTrendingCheckin() {
   const checkinFilter = /đà nẵng|hội an|quảng nam|check-in|cà phê|hoàng hôn|phố cổ|biển|cầu|sơn trà|bà nà/i;
-  const gCheckinUrl = `https://news.google.com/rss/search?q=${encodeURIComponent('("Đà Nẵng" OR "Hội An") ("check-in" OR "sống ảo" OR "quán cà phê đẹp" OR "phố đi bộ") when:30d')}&hl=vi&gl=VN&ceid=VN:vi`;
 
   const settled = await Promise.allSettled([
     fetchWikiGeosearch(15.8801, 108.3380, "Hội An"),
     fetchWikiGeosearch(16.0544, 108.2208, "Đà Nẵng"),
+    fetchRssFeed("https://kenh14.vn/an-quay-di.rss", { defaultSource: "Kenh14", filterRegex: checkinFilter, limit: 5 }),
     fetchRssFeed("https://vnexpress.net/rss/du-lich.rss", { defaultSource: "VnExpress", filterRegex: checkinFilter, limit: 5 }),
     fetchRssFeed("https://thanhnien.vn/rss/du-lich.rss", { defaultSource: "Thanh Niên", filterRegex: checkinFilter, limit: 5 }),
-    fetchRssFeed(gCheckinUrl, { defaultSource: "Trend Check-in", limit: 6 })
+    fetchRssFeed("https://tuoitre.vn/rss/du-lich.rss", { defaultSource: "Tuổi Trẻ", filterRegex: checkinFilter, limit: 5 })
   ]);
 
   const wikiHA = settled[0].status === "fulfilled" ? settled[0].value : [];
   const wikiDN = settled[1].status === "fulfilled" ? settled[1].value : [];
-  const rssItems = [
-    ...(settled[2].status === "fulfilled" ? settled[2].value : []),
-    ...(settled[3].status === "fulfilled" ? settled[3].value : []),
-    ...(settled[4].status === "fulfilled" ? settled[4].value : [])
-  ];
+  const rssWithImg = settled
+    .slice(2)
+    .filter((r) => r.status === "fulfilled")
+    .flatMap((r) => r.value)
+    .filter((x) => Boolean(x.image)); // Chỉ lấy bài báo có ảnh thật cho tab Check-in
 
-  // Xen kẽ tọa độ ảnh đẹp Hội An & Đà Nẵng cùng các bài báo check-in mới
   const interleaved = [];
   const maxLen = Math.max(wikiHA.length, wikiDN.length);
   for (let i = 0; i < maxLen; i++) {
@@ -336,7 +465,7 @@ async function getFreeTrendingCheckin() {
     if (wikiDN[i]) interleaved.push(wikiDN[i]);
   }
 
-  return dedupeAndSortWithImages([...interleaved, ...rssItems], 12);
+  return dedupeAndSortWithImages([...interleaved, ...rssWithImg], 12);
 }
 
 module.exports = async (req, res) => {
@@ -377,7 +506,7 @@ module.exports = async (req, res) => {
     return res.status(200).json(payload);
   } catch (err) {
     return res.status(502).json({
-      error: "Chưa tải được tin tức lúc này, bạn thử bấm làm mới nhé!",
+      error: "Chưa tải được dữ liệu lúc này, bạn thử bấm làm mới nhé!",
       debug: err.message
     });
   }
