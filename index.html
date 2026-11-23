@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>AIvolution — Quét AI & Theo dõi Khám phá Đà Nẵng – Hội An</title>
-  <meta name="description" content="Ứng dụng nhận diện địa điểm, món ăn, sản phẩm tại Đà Nẵng – Hội An bằng AI kèm thuyết minh giọng nói, thời tiết GPS và trợ lý du lịch." />
+  <title>AIvolution — Quét AI, News &amp; Khám phá Đà Nẵng – Hội An</title>
+  <meta name="description" content="Ứng dụng nhận diện địa điểm, món ăn, sản phẩm tại Đà Nẵng – Hội An bằng AI kèm tin nóng, ẩm thực đường phố, tọa độ check-in, thuyết minh giọng nói và thời tiết GPS." />
+  <meta name="robots" content="index, follow" />
   <meta id="themeColorMeta" name="theme-color" content="#F3F3F5" />
   <link rel="canonical" href="https://aitl-teal.vercel.app/" />
   <link rel="icon" type="image/png" href="IMG_1713.png?v=19" />
@@ -13,12 +14,15 @@
 
   <meta property="og:type" content="website" />
   <meta property="og:locale" content="vi_VN" />
+  <meta property="og:site_name" content="AIvolution" />
   <meta property="og:url" content="https://aitl-teal.vercel.app/" />
-  <meta property="og:title" content="AIvolution — Quét AI & Khám phá Đà Nẵng – Hội An" />
-  <meta property="og:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm ước tính calo, thuyết minh tự nhiên và gợi ý bản địa." />
-  <meta name="twitter:card" content="summary" />
-  <meta name="twitter:title" content="AIvolution — Quét AI & Khám phá Đà Nẵng – Hội An" />
-  <meta name="twitter:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm ước tính calo và thuyết minh tự nhiên." />
+  <meta property="og:title" content="AIvolution — Quét AI, News &amp; Khám phá Đà Nẵng – Hội An" />
+  <meta property="og:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm tin nóng thời gian thực, ẩm thực đường phố và tọa độ check-in Đà Nẵng – Hội An." />
+  <meta property="og:image" content="https://aitl-teal.vercel.app/IMG_1713.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="AIvolution — Quét AI, News &amp; Khám phá Đà Nẵng – Hội An" />
+  <meta name="twitter:description" content="Nhận diện địa điểm, món ăn và sản phẩm bằng AI kèm tin nóng thời gian thực, ẩm thực đường phố và tọa độ check-in Đà Nẵng – Hội An." />
+  <meta name="twitter:image" content="https://aitl-teal.vercel.app/IMG_1713.png" />
 
   <script>
     (function () {
@@ -33,7 +37,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=29" />
+  <link rel="stylesheet" href="style.css?v=32" />
 </head>
 <body>
   <div class="app-shell">
@@ -106,6 +110,36 @@
           <div class="mini-bar-track"><div id="barProducts" class="mini-bar-fill bar-coral"></div></div>
           <span id="statProducts" class="mini-val tabular-nums">0 mục</span>
         </div>
+      </section>
+
+      <!-- Icon News & Xu hướng (Vị trí khoanh đỏ bên trái) -->
+      <section class="home-app-dock" aria-label="Tiện ích khám phá nhanh">
+        <button
+          type="button"
+          id="btnOpenNewsHub"
+          class="news-tile-btn"
+          aria-haspopup="dialog"
+          aria-controls="exploreHubModal"
+          aria-label="Mở tab News, Food & Drinks và Check-in Đà Nẵng – Hội An"
+        >
+          <span class="news-tile-icon" aria-hidden="true">
+            <svg viewBox="0 0 64 64" width="58" height="58" fill="none">
+              <rect x="2" y="2" width="60" height="60" rx="15" fill="#F4F5F7" stroke="#CBD5E1" stroke-width="2" />
+              <text x="32" y="21" text-anchor="middle" fill="#111318" font-family="Georgia, 'Times New Roman', serif" font-weight="800" font-size="14">NEWS</text>
+              <rect x="8" y="25" width="48" height="2.4" rx="1.2" fill="#8C939D" />
+              <rect x="8" y="29" width="48" height="1.6" rx="0.8" fill="#B0B7C0" />
+              <rect x="8" y="34" width="17" height="15" rx="2" fill="#9AA1AC" />
+              <rect x="29" y="34" width="27" height="2.2" rx="1" fill="#7D8590" />
+              <rect x="29" y="38.5" width="24" height="2" rx="1" fill="#9AA1AC" />
+              <rect x="29" y="43" width="27" height="2" rx="1" fill="#9AA1AC" />
+              <rect x="29" y="47.5" width="18" height="2" rx="1" fill="#9AA1AC" />
+              <rect x="8" y="52.5" width="48" height="2" rx="1" fill="#8C939D" />
+              <rect x="8" y="56.5" width="36" height="2" rx="1" fill="#B0B7C0" />
+            </svg>
+            <span class="news-tile-dot"></span>
+          </span>
+          <span class="news-tile-label">News</span>
+        </button>
       </section>
     </main>
 
@@ -272,7 +306,65 @@
     </dialog>
   </div>
 
-  <script src="app.js?v=31"></script>
+  <!-- ==================== 7. EXPLORE MINI-TAB HUB (NEWS / FOOD & DRINKS / CHECK-IN) ==================== -->
+  <div id="exploreHubModal" class="explore-overlay" role="dialog" aria-modal="true" aria-labelledby="exploreHubTitle" hidden>
+    <div class="explore-backdrop" data-explore-close></div>
+
+    <div class="explore-window" id="exploreWindow">
+      <aside class="explore-sidebar" aria-label="Danh mục nhanh">
+        <div class="explore-sidebar-brand">
+          <span class="explore-brand-dot" aria-hidden="true"></span>
+          <span>AIvolution</span>
+        </div>
+        <nav class="explore-side-nav" role="tablist" aria-label="Chuyển danh mục khám phá">
+          <button type="button" class="explore-side-btn active" role="tab" aria-selected="true" data-explore-tab="news" data-explore-idx="0">News</button>
+          <button type="button" class="explore-side-btn" role="tab" aria-selected="false" data-explore-tab="food" data-explore-idx="1">Food &amp; Drinks</button>
+          <button type="button" class="explore-side-btn" role="tab" aria-selected="false" data-explore-tab="checkin" data-explore-idx="2">Check-in</button>
+        </nav>
+      </aside>
+
+      <div class="explore-main">
+        <header class="explore-topbar">
+          <div class="explore-topbar-pill">
+            <h2 id="exploreHubTitle" class="explore-heading">Đà Nẵng – Hội An Live</h2>
+            <span id="exploreUpdatedAt" class="explore-updated tabular-nums">Tự động cập nhật</span>
+          </div>
+
+          <div class="explore-topbar-actions">
+            <button type="button" id="btnRefreshExplore" class="explore-icon-btn" aria-label="Làm mới dữ liệu">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+            </button>
+            <button type="button" id="btnCloseExplore" class="explore-icon-btn" data-explore-close aria-label="Đóng bảng tin">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M18 6 6 18" />
+                <path d="m6 6 12 12" />
+              </svg>
+            </button>
+          </div>
+        </header>
+
+        <div id="exploreTrack" class="explore-track" aria-live="polite">
+          <section id="pane-news" class="explore-pane" role="tabpanel" data-pane-tab="news" data-pane-idx="0" aria-label="Tin nóng Đà Nẵng – Hội An"></section>
+          <section id="pane-food" class="explore-pane" role="tabpanel" data-pane-tab="food" data-pane-idx="1" aria-label="Ẩm thực đường phố Hot"></section>
+          <section id="pane-checkin" class="explore-pane" role="tabpanel" data-pane-tab="checkin" data-pane-idx="2" aria-label="Tọa độ Check-in sống ảo"></section>
+        </div>
+
+        <footer class="explore-footer">
+          <div class="explore-pill-row" role="tablist" aria-label="Mini-tab khám phá">
+            <button type="button" class="explore-pill-btn active" role="tab" aria-selected="true" data-explore-tab="news" data-explore-idx="0">News</button>
+            <button type="button" class="explore-pill-btn" role="tab" aria-selected="false" data-explore-tab="food" data-explore-idx="1">Food &amp; Drinks</button>
+            <button type="button" class="explore-pill-btn" role="tab" aria-selected="false" data-explore-tab="checkin" data-explore-idx="2">Check-in</button>
+          </div>
+          <span class="explore-swipe-hint" aria-hidden="true">Vuốt ngang để đổi tab</span>
+        </footer>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=32"></script>
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js");
