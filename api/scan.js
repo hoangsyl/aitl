@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - Turbo Speed (1.8-3s) + Auto-Verify + 100 Concurrent Users
+ * AIvolution Team - Turbo Speed + Exact Object Naming + Auto-Verify + 100 Users
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -7,7 +7,7 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (TỐI ƯU TỐC ĐỘ CỰC NHANH)
+// 1. CẤU HÌNH HỆ THỐNG (TỐC ĐỘ NHANH + CHỊU TẢI 100 USERS)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
@@ -15,7 +15,7 @@ const CONFIG = {
   TOTAL_SCAN_BUDGET_MS: 6500,
   GROQ_ATTEMPT_TIMEOUT_MS: 3200,
   GROQ_MODELS_TIMEOUT_MS: 1200,
-  SERPER_TIMEOUT_MS: 750,
+  SERPER_TIMEOUT_MS: 800,
   GEMINI_BACKUP_TIMEOUT_MS: 3800,
   CHAT_TIMEOUT_MS: 4500,
   TTS_TIMEOUT_MS: 4000,
@@ -32,7 +32,7 @@ const CONFIG = {
 const runtimeState = {
   cachedGroqModels: null,
   cachedGroqModelsAt: 0,
-  groqVisionDisabledUntil: 0,   // Tự bỏ qua Groq Vision trong 0ms nếu tài khoản không có model ảnh
+  groqVisionDisabledUntil: 0,
   badGroqVisionModels: new Set(),
   badGeminiModels: new Set(),
   keyCooldownUntil: new Map(),
@@ -126,7 +126,7 @@ function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
 }
 
 // ==========================================
-// 3. TIỆN ÍCH ĐỊA LÝ & CHUẨN HÓA DỮ LIỆU
+// 3. TIỆN ÍCH ĐỊA LÝ & CHUẨN HÓA DỮ LIỆU (CHỐNG LỖI "CHƯA XÁC ĐỊNH")
 // ==========================================
 function clampToDaNangHoiAn(lat, lng, locationContext = "") {
   const numLat = Number(lat);
@@ -243,6 +243,46 @@ function extractJson(rawText) {
   }
 }
 
+function isInvalidTitle(str) {
+  const s = String(str || "").trim();
+  if (!s || s.length < 2) return true;
+  return /^(không áp dụng|chưa xác định|không xác định|chưa rõ|không rõ|không có|n\/a|none|null|vật thể|đối tượng|sản phẩm)$/i.test(s) ||
+    /chưa xác định|không xác định|chưa rõ từ ảnh|không áp dụng/i.test(s);
+}
+
+function deriveCleanTitle({ sp, data, ocrText, loai }) {
+  // Ưu tiên lấy cụm danh từ ngắn gọn từ chi tiết sản phẩm hoặc câu chuyện lịch sử
+  const candidates = [
+    sp.chi_tiet_san_pham,
+    data.cau_chuyen_lich_su,
+    data.giai_thoai_dac_biet
+  ];
+
+  for (const raw of candidates) {
+    const text = String(raw || "")
+      .replace(/^(ảnh chụp|hình ảnh|đây là|đối tượng là|vật thể là|sản phẩm là)\s+/i, "")
+      .trim();
+    if (!text || isInvalidTitle(text)) continue;
+
+    // Cắt tại dấu chấm/phẩy hoặc từ nối mô tả dài để giữ tên gọn đẹp
+    let shortName = text
+      .split(/[.,;(]|\s+(?:mang ý nghĩa|thường được|được sử dụng|dùng để|treo trên|đặt trên|có thiết kế)/i)[0]
+      .trim();
+
+    if (shortName.length > 56) {
+      shortName = shortName.slice(0, 56).replace(/\s+\S*$/, "").trim();
+    }
+    if (shortName.length >= 4) {
+      return shortName.charAt(0).toUpperCase() + shortName.slice(1);
+    }
+  }
+
+  if (ocrText && !/không có chữ/i.test(ocrText)) {
+    return ocrText.slice(0, 56);
+  }
+  return loai && !isInvalidTitle(loai) ? loai : "Vật phẩm nhận diện";
+}
+
 function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
   const data = raw && typeof raw === "object" ? raw : {};
 
@@ -264,15 +304,12 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
     ? data.danh_gia_ban_dia
     : {};
 
+  const loai = String(data.loai_doi_tuong || "Vật thể").trim();
   let ten = String(data.ten_dia_diem || "").trim();
-  if (!ten || /^(không áp dụng|chưa xác định|n\/a|none|null)$/i.test(ten)) {
-    const chiTiet = String(sp.chi_tiet_san_pham || data.cau_chuyen_lich_su || "").trim();
-    ten = ocrText && !/không có chữ/i.test(ocrText)
-      ? ocrText.slice(0, 65)
-      : (chiTiet ? chiTiet.split(/[.,(]/)[0].trim().slice(0, 65) : "Đối tượng nhận diện");
+  if (isInvalidTitle(ten)) {
+    ten = deriveCleanTitle({ sp, data, ocrText, loai });
   }
 
-  const loai = String(data.loai_doi_tuong || "Vật thể").trim();
   const isPlace =
     data.la_dia_diem === true ||
     /di tích|nhà hàng|quán ăn|workshop|shop|hán nôm|địa điểm|trường học|tổ chức|thương hiệu/i.test(loai);
@@ -281,7 +318,10 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
     data.dia_chi || (isPlace ? "Chưa xác định rõ từ ảnh" : "Không áp dụng")
   ).trim();
 
-  const nienDaiGia = String(data.nien_dai_hoac_gia || "Chưa xác định rõ từ ảnh").trim();
+  const rawPrice = String(data.nien_dai_hoac_gia || "").trim();
+  const nienDaiGia = !rawPrice || /chưa xác định|không áp dụng/i.test(rawPrice)
+    ? (isPlace ? "Chưa xác định rõ" : "Tham khảo theo nơi bán")
+    : rawPrice;
 
   const isFoodOrDrink = /thức ăn|đồ uống|món ăn|nước uống|thực phẩm|bánh|trái cây/i.test(loai);
   const rawCalo = String(sp.calo_uoc_tinh || "").trim();
@@ -336,26 +376,29 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 }
 
 // ==========================================
-// 4. PROMPT SIÊU GỌN – OCR CHUẨN – KHÔNG BỊA – PHẢN HỒI CỰC NHANH
+// 4. PROMPT SIÊU GỌN – LUÔN ĐẶT TÊN ĐÚNG VẬT PHẨM – KHÔNG BỊA
 // ==========================================
 function buildVisionPrompt(locationContext) {
   return `Chuyên gia Computer Vision & OCR của AIvolution. Vị trí: ${locationContext || "Hội An – Đà Nẵng"}.
 
-LUẬT BẮT BUỘC (KHÔNG BỊA):
+LUẬT BẮT BUỘC:
 1. OCR: Chép nguyên văn chữ/logo trường học/thương hiệu/dung tích/Hán-Nôm thấy rõ vào "chu_doc_duoc_tren_anh" (không có ghi "Không có chữ").
-2. Không bịa tên hãng, địa chỉ hay năm thành lập nếu không chắc 100% (ghi "Chưa xác định rõ từ ảnh"). Phù hiệu/logo trường học đặt "loai_doi_tuong": "Trường học & Tổ chức", "la_dia_diem": true. Không gượng ép gắn đồ cá nhân vào Hội An.
-3. Calo (KHÔNG BỊA): đọc đúng nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi phép cộng vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật ghi "Không áp dụng".
-4. Đặc sản: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
-5. Viết cực súc tích 3 câu/mục để trả về nhanh nhất. CHỈ TRẢ JSON:
+2. ĐẶT TÊN TRONG "ten_dia_diem": ĐÂY LÀ TIÊU ĐỀ HIỂN THỊ CHÍNH. BẮT BUỘC ghi tên gọi cụ thể, chính xác bằng tiếng Việt của vật thể, món ăn, sản phẩm, logo trường học hoặc địa điểm nhìn thấy (VD: "Dây treo trang trí Tết Vạn Sự Như Ý", "Bình lắc tập gym màu đen", "Trường THPT Trần Quý Cáp"). TUYỆT ĐỐI KHÔNG BAO GIỜ ghi "Chưa xác định rõ từ ảnh" hay "Không áp dụng" vào "ten_dia_diem".
+3. CHỐNG BỊA: Không tự bịa tên thương hiệu, địa chỉ hay năm thành lập nếu không chắc 100% (riêng "dia_chi" nếu không rõ mới ghi "Chưa xác định rõ từ ảnh"). Logo/phù hiệu trường học đặt "loai_doi_tuong": "Trường học & Tổ chức", "la_dia_diem": true.
+4. GIÁ & CALO:
+   - Giá ("nien_dai_hoac_gia"): Với vật thể/đồ trang trí/sản phẩm/món ăn phổ biến tại Việt Nam, ước lượng khoảng giá bán lẻ thực tế VNĐ (VD: "25.000 - 60.000 VNĐ"). Với trường học/di tích, ghi năm thành lập thật hoặc "Chưa xác định rõ".
+   - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi phép cộng vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
+5. Đặc sản: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
+6. Viết súc tích 3 câu/mục để phản hồi nhanh nhất. CHỈ TRẢ JSON:
 
 {
   "khong_nhan_dien_duoc": false,
   "chu_doc_duoc_tren_anh": "Chữ/logo/dung tích đọc được",
   "loai_doi_tuong": "Trường học & Tổ chức | Thương hiệu | Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
   "la_dia_diem": false,
-  "ten_dia_diem": "Tên đầy đủ chính xác nhất",
-  "dia_chi": "Địa chỉ thật nếu chắc 100%, không chắc ghi 'Chưa xác định rõ từ ảnh', đồ vật ghi 'Không áp dụng'",
-  "nien_dai_hoac_gia": "Năm thành lập thật hoặc khoảng giá VNĐ thực tế, không rõ ghi 'Chưa xác định rõ từ ảnh'",
+  "ten_dia_diem": "Tên gọi cụ thể của vật thể, sản phẩm, món ăn, trường học hoặc địa điểm (CẤM ghi 'Chưa xác định')",
+  "dia_chi": "Địa chỉ thật nếu là địa điểm và chắc 100%, không chắc ghi 'Chưa xác định rõ từ ảnh'; đồ vật ghi 'Không áp dụng'",
+  "nien_dai_hoac_gia": "Khoảng giá bán lẻ VNĐ phổ biến tại Việt Nam (VD: '30.000 - 60.000 VNĐ') hoặc năm thành lập thật nếu là trường/di tích",
   "cau_chuyen_lich_su": "1 câu chính xác về bản chất/công dụng/lịch sử.",
   "giai_thoai_dac_biet": "1 câu mô tả chi tiết thực tế thấy trong ảnh.",
   "thong_tin_san_pham": {
@@ -409,7 +452,6 @@ async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIM
 }
 
 function getStrictGroqVisionModels(liveModels = []) {
-  // CHỈ chọn model chắc chắn hỗ trợ ảnh (tránh nhầm qwen/kimi thuần text gây tốn 2-3s báo 400)
   const trueVisionRegex = /vision|vl|multimodal|omni|pixtral|maverick|scout|llama-4/i;
   const excludeRegex = /guard|safeguard|whisper|tts|embed|gpt-oss|deepseek|mixtral|llama-3|allam|gemma/i;
 
@@ -470,7 +512,6 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
 }
 
 async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
-  // Nếu đã xác định tài khoản Groq không có model Vision -> thoát ngay trong 0ms
   if (Date.now() < runtimeState.groqVisionDisabledUntil) {
     throw new Error("Groq Vision tạm bỏ qua (không có model ảnh)");
   }
@@ -537,7 +578,7 @@ async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
 }
 
 // ==========================================
-// 6. TẦNG 2: GEMINI FLASH SIÊU NHANH (TẮT THINKING)
+// 6. TẦNG 2: GEMINI FLASH SIÊU NHANH
 // ==========================================
 async function runGeminiBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
   const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
@@ -596,7 +637,7 @@ async function runGeminiBackupVision({ apiKeys, prompt, imageBase64, deadline })
         return { result: extractJson(content), provider: `gemini:${model}` };
       } catch (err) {
         errors.push(err.message);
-        if (err.message.includes("404") || err.message.includes("503")) break; // 503 chuyển model ngay
+        if (err.message.includes("404") || err.message.includes("503")) break;
       }
     }
   }
@@ -607,7 +648,7 @@ async function runGeminiBackupVision({ apiKeys, prompt, imageBase64, deadline })
 }
 
 // ==========================================
-// 7. XÁC THỰC GOOGLE THÔNG MINH (CHỈ CHẠY KHI CẦN – TỐI ĐA 750ms)
+// 7. XÁC THỰC GOOGLE THÔNG MINH (MAX 800ms + CACHE 60P)
 // ==========================================
 async function querySerperCached(query, num = 4, timeoutMs = CONFIG.SERPER_TIMEOUT_MS) {
   const normKey = `serper:${normalizeTextForMatch(query)}:${num}`;
@@ -688,7 +729,7 @@ function extractPriceRangeFromSerper(data) {
 }
 
 async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeoutMs }) {
-  if (!payload || !payload.ten_dia_diem) return payload;
+  if (!payload || !payload.ten_dia_diem || isInvalidTitle(payload.ten_dia_diem)) return payload;
 
   const isSchoolOrOrg = /trường học|tổ chức|di tích|hán nôm/i.test(payload.loai_doi_tuong);
   const isPlaceOrBrand =
@@ -736,7 +777,7 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
       if (foundedAttr) {
         payload.nien_dai_hoac_gia = `Thành lập ${String(foundedAttr).trim()}`;
         verifiedAny = true;
-      } else if (/chưa xác định|tùy/i.test(payload.nien_dai_hoac_gia)) {
+      } else if (/chưa xác định|tham khảo/i.test(payload.nien_dai_hoac_gia)) {
         const yearMatch = allSnippets.match(
           /thành lập(?:\s+vào)?(?:\s+ngày)?\s+(\d{1,2}[\/.-]\d{1,2}[\/.-](?:1\d{3}|20\d{2})|(?:năm\s+)?(?:1\d{3}|20\d{2}))/i
         );
@@ -777,7 +818,7 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
     return attachMapLinks(payload, { areaPoint, locationContext });
   }
 
-  // NHÁNH 2: Chỉ tra giá Google nếu là sản phẩm có đọc được tên hãng/chữ trên bao bì (tiết kiệm 0.8s cho món ăn thường/đồ trơn)
+  // NHÁNH 2: Tra giá sản phẩm / đồ vật
   const hasBrandText = Boolean(payload._ocr && !/^không có chữ$/i.test(payload._ocr) && payload._ocr.length >= 3);
   if (isFood && !hasBrandText) return payload;
   if (!hasBrandText && /\d/.test(payload.nien_dai_hoac_gia)) return payload;
@@ -787,7 +828,8 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
     ? `${payload.ten_dia_diem} ${unitMatch[0]}`
     : payload.ten_dia_diem;
 
-  const data = await querySerperCached(`giá ${searchName} chính hãng`, 4, timeoutMs);
+  const priceQuery = hasBrandText ? `giá ${searchName} chính hãng` : `giá bán ${searchName}`;
+  const data = await querySerperCached(priceQuery, 4, timeoutMs);
   if (data) {
     const realPrice = extractPriceRangeFromSerper(data);
     if (realPrice) {
@@ -1239,7 +1281,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 10. ENTRY POINT SERVERLESS HANDLER (TURBO 1.8–3s)
+// 10. ENTRY POINT SERVERLESS HANDLER
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
