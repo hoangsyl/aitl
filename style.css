@@ -1227,6 +1227,7 @@ input:focus-visible {
     animation-duration: 0.01ms !important;
   }
 }
+
 /* ==========================================
    WEATHER REDESIGN (SCOPED TO #viewWeather)
    ========================================== */
@@ -1679,6 +1680,7 @@ input:focus-visible {
     transition: none;
   }
 }
+
 /* ==========================================
    SCANNER DOT-MATRIX SWEEP (GỌN TRONG KHUNG VUÔNG)
    ========================================== */
@@ -1788,8 +1790,9 @@ input:focus-visible {
     opacity: 0.45;
   }
 }
+
 /* ==========================================
-   AIvolution
+   AIvolution - LIQUID GLASS NAV
    ========================================== */
 .bottom-nav {
   touch-action: pan-y;
@@ -1815,7 +1818,6 @@ input:focus-visible {
   transform: scale(1.08);
 }
 
-/* Giọt kính Liquid Glass trong suốt trượt theo ngón tay */
 .nav-liquid-glass {
   position: absolute;
   top: 50%;
@@ -1827,7 +1829,6 @@ input:focus-visible {
   z-index: 1;
   opacity: 0;
   transform: translate3d(0, -50%, 0) scale(0.84);
-  /* Bề mặt kính trong suốt + viền phản chiếu trên/dưới giống iOS 26 */
   background: linear-gradient(
     180deg,
     rgba(255, 255, 255, 0.24) 0%,
@@ -1878,8 +1879,9 @@ input:focus-visible {
     transition: none;
   }
 }
+
 /* ==========================================
-  AIvolution Team
+   AIvolution Team - MINI QR SWEEP
    ========================================== */
 [hidden] {
   display: none !important;
@@ -1910,6 +1912,7 @@ input:focus-visible {
     animation: none;
   }
 }
+
 /* ==========================================
    WEATHER ICONS ANIMATION (NẮNG / MÂY / MƯA / BÃO)
    ========================================== */
@@ -1928,7 +1931,6 @@ input:focus-visible {
   will-change: transform, opacity;
 }
 
-/* 1. Nắng: Mặt trời xoay chậm + nhịp sáng */
 .wx-anim-icon .wx-sun-spin {
   animation: wxSunRotate 14s linear infinite;
 }
@@ -1941,7 +1943,6 @@ input:focus-visible {
   animation: wxMoonSway 4s ease-in-out infinite;
 }
 
-/* 2. Mây: Trôi bồng bềnh nhẹ nhàng */
 .wx-is-cloudy .wx-cloud,
 .wx-is-partly .wx-cloud {
   animation: wxCloudFloat 3.6s ease-in-out infinite;
@@ -1951,7 +1952,6 @@ input:focus-visible {
   animation: wxCloudBob 2.6s ease-in-out infinite;
 }
 
-/* 3. Mưa: Hạt mưa rơi chéo liên tục theo nhịp */
 .wx-anim-icon .wx-drop {
   animation: wxRainFall 1.05s linear infinite;
 }
@@ -1962,7 +1962,6 @@ input:focus-visible {
   animation-delay: 0.7s;
 }
 
-/* 4. Bão & Sấm sét: Mây rung nhẹ + tia chớp lóe sáng */
 .wx-is-storm .wx-cloud {
   animation: wxStormCloud 2.8s ease-in-out infinite;
 }
@@ -1971,7 +1970,6 @@ input:focus-visible {
   animation: wxLightningFlash 2.8s ease-in-out infinite;
 }
 
-/* 5. Animation cho nút icon Thời tiết trên Header & Thanh điều hướng */
 #btnQuickWeather svg,
 .nav-btn[data-nav="weather"] svg {
   overflow: visible;
@@ -2055,6 +2053,653 @@ input:focus-visible {
   .wx-anim-icon *,
   #btnQuickWeather svg path:last-child,
   .nav-btn[data-nav="weather"] svg path:last-child {
+    animation: none !important;
+  }
+}
+
+/* ==========================================
+   NEWS TILE & EXPLORE MINI-TAB DASHBOARD HUB
+   (Đồng bộ hoàn toàn Light / Dark Mode của AIvolution)
+   ========================================== */
+:root {
+  --exp-backdrop: rgba(15, 23, 42, 0.42);
+  --exp-surface-soft: #F3F3F5;
+  --exp-surface-card: #FFFFFF;
+  --exp-border-strong: rgba(15, 23, 42, 0.14);
+}
+
+[data-theme="dark"] {
+  --exp-backdrop: rgba(4, 5, 8, 0.74);
+  --exp-surface-soft: #101116;
+  --exp-surface-card: #1C1E26;
+  --exp-border-strong: rgba(255, 255, 255, 0.14);
+}
+
+/* 1. Ô icon NEWS nhỏ gọn ngay góc trái dưới 3 thẻ thống kê */
+.home-app-dock {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  margin: 0 0 18px;
+}
+
+.news-tile-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+}
+
+.news-tile-btn:active {
+  transform: scale(0.93);
+}
+
+.news-tile-btn:focus-visible,
+.explore-icon-btn:focus-visible,
+.explore-pill-btn:focus-visible,
+.explore-side-btn:focus-visible,
+.explore-card-action:focus-visible,
+.explore-mini-btn:focus-visible {
+  outline: 2px solid var(--lime-vivid);
+  outline-offset: 2px;
+}
+
+.news-tile-icon {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--exp-border-strong);
+  box-shadow: var(--nav-shadow);
+}
+
+.news-tile-dot {
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--lime-vivid);
+  border: 2px solid var(--canvas);
+}
+
+.news-tile-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* 2. Modal Dashboard nổi (chỉ animate transform + opacity) */
+.explore-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding:
+    max(12px, env(safe-area-inset-top))
+    12px
+    max(12px, env(safe-area-inset-bottom))
+    12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 200ms ease-out;
+}
+
+.explore-overlay.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.explore-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--exp-backdrop);
+}
+
+.explore-window {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 860px);
+  height: min(85dvh, 700px);
+  display: grid;
+  grid-template-columns: 1fr;
+  border-radius: 26px;
+  border: 1px solid var(--exp-border-strong);
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.38);
+  overflow: hidden;
+  transform: translate3d(0, 20px, 0) scale(0.96);
+  opacity: 0;
+  transition: transform 220ms ease-out, opacity 200ms ease-out;
+}
+
+.explore-window.is-animating {
+  will-change: transform, opacity;
+}
+
+.explore-overlay.is-open .explore-window {
+  transform: translate3d(0, 0, 0) scale(1);
+  opacity: 1;
+}
+
+/* Sidebar trái trên màn hình rộng */
+.explore-sidebar {
+  display: none;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 14px;
+  border-right: 1px solid var(--border);
+  background: var(--exp-surface-soft);
+}
+
+.explore-sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 4px 8px;
+}
+
+.explore-brand-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--lime-vivid);
+}
+
+.explore-side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.explore-side-btn {
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13.5px;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.explore-side-btn.active {
+  background: var(--exp-surface-card);
+  border-color: var(--exp-border-strong);
+  color: var(--ink);
+}
+
+/* Khung nội dung chính */
+.explore-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.explore-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.explore-topbar-pill {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 7px 14px;
+  border-radius: 14px;
+  background: var(--exp-surface-soft);
+  border: 1px solid var(--border);
+}
+
+.explore-heading {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  text-wrap: balance;
+}
+
+.explore-updated {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.explore-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.explore-icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--exp-surface-soft);
+  color: var(--ink);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+}
+
+.explore-icon-btn:active {
+  transform: scale(0.94);
+}
+
+/* Track vuốt ngang Mini-Tab (CSS Scroll Snap) */
+.explore-track {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+
+.explore-track::-webkit-scrollbar {
+  display: none;
+}
+
+.explore-pane {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 14px 16px 18px;
+}
+
+/* Bố cục 2 thẻ nổi bật + khung danh sách */
+.explore-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.explore-featured-col {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.explore-featured-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  border: 1px solid var(--exp-border-strong);
+  background: var(--exp-surface-card);
+}
+
+.explore-featured-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.explore-thumb {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  object-fit: cover;
+  background: var(--exp-surface-soft);
+  border: 1px solid var(--border);
+}
+
+.explore-thumb-fallback {
+  flex: 0 0 64px;
+  width: 64px;
+  height: 64px;
+  border-radius: 14px;
+  background: var(--exp-surface-soft);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--lime-vivid);
+}
+
+.explore-card-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.explore-meta-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.explore-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--exp-surface-soft);
+  color: var(--ink);
+  border: 1px solid var(--border);
+}
+
+.explore-meta-text {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.explore-card-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--ink);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-wrap: balance;
+}
+
+.explore-card-desc {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  text-wrap: pretty;
+}
+
+.explore-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.explore-card-action {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 10px;
+  border-radius: 11px;
+  font-size: 12.5px;
+  font-weight: 700;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  background: var(--exp-surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+  transition: transform 150ms ease-out;
+}
+
+.explore-card-action.primary {
+  background: var(--lime-vivid);
+  border-color: transparent;
+  color: var(--hero-ink);
+}
+
+.explore-card-action:active {
+  transform: scale(0.96);
+}
+
+/* Khung danh sách các mục tiếp theo */
+.explore-list-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--exp-surface-soft);
+}
+
+.explore-list-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: var(--exp-surface-card);
+}
+
+.explore-list-thumb {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border-radius: 11px;
+  object-fit: cover;
+  background: var(--exp-surface-soft);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.explore-list-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.explore-list-title {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.explore-list-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.explore-list-btns {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.explore-mini-btn {
+  padding: 6px 9px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-decoration: none;
+  border: 1px solid var(--border);
+  background: var(--exp-surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.explore-mini-btn.accent {
+  background: var(--lime-vivid);
+  border-color: transparent;
+  color: var(--hero-ink);
+}
+
+/* Thanh Pill Mini-Tab dưới cùng */
+.explore-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.explore-pill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.explore-pill-row::-webkit-scrollbar {
+  display: none;
+}
+
+.explore-pill-btn {
+  flex: 0 0 auto;
+  padding: 9px 15px;
+  border-radius: 12px;
+  border: 1px solid var(--exp-border-strong);
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out;
+}
+
+.explore-pill-btn.active {
+  background: var(--lime-vivid);
+  border-color: transparent;
+  color: var(--hero-ink);
+}
+
+.explore-pill-btn:active {
+  transform: scale(0.95);
+}
+
+.explore-swipe-hint {
+  font-size: 11.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* Skeleton loading (chỉ chạy animation khi modal đang mở) */
+.explore-skel-card {
+  height: 126px;
+  border-radius: 18px;
+  background: var(--exp-surface-card);
+  border: 1px solid var(--border);
+  opacity: 0.7;
+}
+
+.explore-skel-row {
+  height: 62px;
+  border-radius: 14px;
+  background: var(--exp-surface-card);
+  border: 1px solid var(--border);
+  opacity: 0.65;
+}
+
+.explore-overlay.is-open .explore-skel-card,
+.explore-overlay.is-open .explore-skel-row {
+  animation: expPulse 1.3s ease-in-out infinite;
+}
+
+@keyframes expPulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.85; }
+}
+
+.explore-empty {
+  padding: 28px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border);
+  background: var(--exp-surface-soft);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.explore-empty p {
+  font-size: 13.5px;
+  color: var(--muted);
+  text-wrap: pretty;
+}
+
+@media (min-width: 768px) {
+  .explore-window {
+    grid-template-columns: 188px 1fr;
+  }
+  .explore-sidebar {
+    display: flex;
+  }
+  .explore-grid {
+    grid-template-columns: 1fr 1.08fr;
+    align-items: start;
+  }
+}
+
+@media (max-width: 520px) {
+  .explore-swipe-hint {
+    display: none;
+  }
+  .explore-pill-row {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .explore-pill-btn {
+    flex: 1;
+    padding: 9px 10px;
+    text-align: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .explore-overlay,
+  .explore-window,
+  .news-tile-btn,
+  .explore-pill-btn,
+  .explore-icon-btn,
+  .explore-card-action {
+    transition: none !important;
     animation: none !important;
   }
 }
