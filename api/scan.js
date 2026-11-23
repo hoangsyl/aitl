@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - Turbo Speed + Exact Object Naming + Auto-Verify + 100 Users
+ * AIvolution Team - Gemini Vision Primary + Groq Backup + Auto-Verify + 100 Users
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -7,16 +7,16 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG 
+// 1. CẤU HÌNH HỆ THỐNG (GEMINI QUÉT ẢNH CHÍNH – GROQ DỰ PHÒNG & CHAT CHÍNH)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  GEMINI_BACKUP_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
-  TOTAL_SCAN_BUDGET_MS: 6500,
-  GROQ_ATTEMPT_TIMEOUT_MS: 3200,
+  GEMINI_VISION_MODELS: ["gemini-3.5-flash-lite", "gemini-3.8-flash"],
+  TOTAL_SCAN_BUDGET_MS: 7500,
+  GEMINI_VISION_TIMEOUT_MS: 4600,
+  GROQ_BACKUP_TIMEOUT_MS: 3200,
   GROQ_MODELS_TIMEOUT_MS: 1200,
   SERPER_TIMEOUT_MS: 800,
-  GEMINI_BACKUP_TIMEOUT_MS: 3800,
   CHAT_TIMEOUT_MS: 4500,
   TTS_TIMEOUT_MS: 4000,
   MODELS_CACHE_TTL_MS: 20 * 60 * 1000,
@@ -36,11 +36,11 @@ const runtimeState = {
   badGroqVisionModels: new Set(),
   badGeminiModels: new Set(),
   keyCooldownUntil: new Map(),
-  rrIndex: Object.create(null),
-  inFlight: new Map(),
-  scanCache: new Map(),
-  serperCache: new Map(),
-  ttsCache: new Map()
+  rrIndex: Object.create(null), // Round-robin chia tải đều 30 key/nguồn
+  inFlight: new Map(),          // Single-flight gộp request trùng
+  scanCache: new Map(),         // Cache ảnh 15 phút
+  serperCache: new Map(),       // Cache Google/giá 60 phút
+  ttsCache: new Map()           // Cache giọng đọc 30 phút
 };
 
 // ==========================================
@@ -119,14 +119,14 @@ function markKeyCooldown(apiKey, ms = CONFIG.KEY_COOLDOWN_429_MS) {
   runtimeState.keyCooldownUntil.set(apiKey, Date.now() + ms);
 }
 
-function fetchWithTimeout(url, options = {}, timeoutMs = 3500) {
+function fetchWithTimeout(url, options = {}, timeoutMs = 4200) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(600, timeoutMs));
   return fetch(url, { ...options, signal: controller.signal }).finally(() => clearTimeout(timer));
 }
 
 // ==========================================
-// 3. TIỆN ÍCH ĐỊA LÝ & CHUẨN HÓA DỮ LIỆU (CHỐNG LỖI "CHƯA XÁC ĐỊNH")
+// 3. TIỆN ÍCH ĐỊA LÝ & CHUẨN HÓA DỮ LIỆU
 // ==========================================
 function clampToDaNangHoiAn(lat, lng, locationContext = "") {
   const numLat = Number(lat);
@@ -251,7 +251,6 @@ function isInvalidTitle(str) {
 }
 
 function deriveCleanTitle({ sp, data, ocrText, loai }) {
-  // Ưu tiên lấy cụm danh từ ngắn gọn từ chi tiết sản phẩm hoặc câu chuyện lịch sử
   const candidates = [
     sp.chi_tiet_san_pham,
     data.cau_chuyen_lich_su,
@@ -264,7 +263,6 @@ function deriveCleanTitle({ sp, data, ocrText, loai }) {
       .trim();
     if (!text || isInvalidTitle(text)) continue;
 
-    // Cắt tại dấu chấm/phẩy hoặc từ nối mô tả dài để giữ tên gọn đẹp
     let shortName = text
       .split(/[.,;(]|\s+(?:mang ý nghĩa|thường được|được sử dụng|dùng để|treo trên|đặt trên|có thiết kế)/i)[0]
       .trim();
@@ -376,7 +374,7 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 }
 
 // ==========================================
-// 4. PROMPT SIÊU GỌN – LUÔN ĐẶT TÊN ĐÚNG VẬT PHẨM – KHÔNG BỊA
+// 4. PROMPT CHI TIẾT SÂU SẮC – NHANH – KHÔNG BỊA
 // ==========================================
 function buildVisionPrompt(locationContext) {
   return `Chuyên gia Computer Vision & OCR của AIvolution. Vị trí: ${locationContext || "Hội An – Đà Nẵng"}.
@@ -387,9 +385,9 @@ LUẬT BẮT BUỘC:
 3. CHỐNG BỊA: Không tự bịa tên thương hiệu, địa chỉ hay năm thành lập nếu không chắc 100% (riêng "dia_chi" nếu không rõ mới ghi "Chưa xác định rõ từ ảnh"). Logo/phù hiệu trường học đặt "loai_doi_tuong": "Trường học & Tổ chức", "la_dia_diem": true.
 4. GIÁ & CALO:
    - Giá ("nien_dai_hoac_gia"): Với vật thể/đồ trang trí/sản phẩm/món ăn phổ biến tại Việt Nam, ước lượng khoảng giá bán lẻ thực tế VNĐ (VD: "25.000 - 60.000 VNĐ"). Với trường học/di tích, ghi năm thành lập thật hoặc "Chưa xác định rõ".
-   - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi phép cộng vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
+   - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi rõ từng phần vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
 5. Đặc sản: Cao lầu (sợi dày vuông vàng/nâu, xá xíu, không đậu phộng); Mì Quảng (sợi dẹt to, có đậu phộng, bánh tráng mè).
-6. Viết súc tích 5 câu/mục để phản hồi nhanh nhất. CHỈ TRẢ JSON:
+6. ĐỘ CHI TIẾT & TỐC ĐỘ: Viết giàu thông tin, cụ thể nhưng gọn ý (2–3 câu cho mục chính, 1–2 câu cho mục phụ) để vừa đủ chiều sâu vừa trả về nhanh. CHỈ TRẢ JSON:
 
 {
   "khong_nhan_dien_duoc": false,
@@ -399,23 +397,97 @@ LUẬT BẮT BUỘC:
   "ten_dia_diem": "Tên gọi cụ thể của vật thể, sản phẩm, món ăn, trường học hoặc địa điểm (CẤM ghi 'Chưa xác định')",
   "dia_chi": "Địa chỉ thật nếu là địa điểm và chắc 100%, không chắc ghi 'Chưa xác định rõ từ ảnh'; đồ vật ghi 'Không áp dụng'",
   "nien_dai_hoac_gia": "Khoảng giá bán lẻ VNĐ phổ biến tại Việt Nam (VD: '30.000 - 60.000 VNĐ') hoặc năm thành lập thật nếu là trường/di tích",
-  "cau_chuyen_lich_su": "1 câu chính xác về bản chất/công dụng/lịch sử.",
-  "giai_thoai_dac_biet": "1 câu mô tả chi tiết thực tế thấy trong ảnh.",
+  "cau_chuyen_lich_su": "2-3 câu đầy đủ và chính xác về bản chất, nguồn gốc/ý nghĩa văn hóa và công dụng thực tế.",
+  "giai_thoai_dac_biet": "2-3 câu mô tả sắc nét các chi tiết quan sát trực tiếp trong ảnh (màu sắc, hoa văn, bố cục, chất liệu, điểm nhấn nổi bật).",
   "thong_tin_san_pham": {
     "hien_thi": true,
     "calo_uoc_tinh": "Số kcal chính xác | 'Chưa đủ dữ liệu trên ảnh' | 'Không áp dụng'",
-    "tot_cho_suc_khoe": "1 câu thực tế hoặc 'Không áp dụng'",
-    "chi_tiet_san_pham": "Định lượng calo hoặc chất liệu/dung tích.",
-    "noi_mua_goi_y": "Khu vực hoặc loại cửa hàng phổ biến.",
+    "tot_cho_suc_khoe": "1-2 câu đánh giá dinh dưỡng/độ an toàn hoặc lưu ý sử dụng (ghi 'Không áp dụng' với logo trường/di tích).",
+    "chi_tiet_san_pham": "1-2 câu nêu rõ bảng cộng định lượng calo (nếu là món ăn) hoặc chất liệu, kích thước, thành phần nổi bật.",
+    "noi_mua_goi_y": "Khu vực hoặc loại cửa hàng/siêu thị phổ biến tại Việt Nam.",
     "tu_khoa_mua_hang": "Từ khóa Google Maps"
   },
   "han_viet": { "co_han_viet": false, "chu_goc": "", "phien_am": "", "phan_tich_tung_tu": [], "y_nghia_tong_the": "" },
-  "danh_gia_ban_dia": { "tom_tat": "1 câu khách quan.", "review_mau": ["Ưu điểm", "Lưu ý"] }
+  "danh_gia_ban_dia": {
+    "tom_tat": "1-2 câu nhận xét khách quan về giá trị sử dụng, độ phổ biến hoặc trải nghiệm thực tế.",
+    "review_mau": ["Ưu điểm cụ thể thực tế", "Lưu ý hữu ích khi mua hoặc sử dụng"]
+  }
 }`;
 }
 
 // ==========================================
-// 5. TẦNG 1: GROQ LPU (CHỈ GỌI MODEL ẢNH THẬT – BỎ QUA 0ms NẾU KHÔNG CÓ)
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): GEMINI FLASH SIÊU NHANH + XOAY VÒNG KEY
+// ==========================================
+async function runGeminiPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
+  const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
+  const errors = [];
+
+  for (const model of CONFIG.GEMINI_VISION_MODELS) {
+    if (runtimeState.badGeminiModels.has(model)) continue;
+
+    for (const apiKey of apiKeys.slice(0, 3)) {
+      const remaining = deadline - Date.now();
+      if (remaining < 1000) break;
+
+      try {
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const generationConfig = {
+          temperature: 0.1,
+          maxOutputTokens: 1150,
+          responseMimeType: "application/json"
+        };
+        if (/3\.8-flash|3\.6-flash|2\.5-flash/.test(model)) {
+          generationConfig.thinkingConfig = { thinkingBudget: 0 };
+        }
+
+        const res = await fetchWithTimeout(
+          endpoint,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    { text: prompt },
+                    { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } }
+                  ]
+                }
+              ],
+              generationConfig
+            })
+          },
+          Math.min(CONFIG.GEMINI_VISION_TIMEOUT_MS, remaining)
+        );
+
+        const rawText = await res.text();
+        if (!res.ok) {
+          if (res.status === 404) runtimeState.badGeminiModels.add(model);
+          else if (res.status === 429) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+          else if (res.status === 401 || res.status === 403) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+          throw new Error(`Gemini(${model}) HTTP ${res.status}`);
+        }
+
+        const parsed = JSON.parse(rawText.trim());
+        const content = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!content) throw new Error(`Gemini(${model}): Empty content`);
+        return { result: extractJson(content), provider: `gemini:${model}` };
+      } catch (err) {
+        errors.push(err.message);
+        // 404 (không tồn tại) hoặc 503 (model đang quá tải) -> chuyển ngay sang model Gemini tiếp theo
+        if (err.message.includes("404") || err.message.includes("503")) break;
+      }
+    }
+  }
+
+  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Gemini không phản hồi");
+  finalErr.isRateLimit = errors.some((e) => e.includes("429"));
+  throw finalErr;
+}
+
+// ==========================================
+// 6. TẦNG 2 (DỰ PHÒNG QUÉT ẢNH + CHÍNH CHO CHATBOT): GROQ LPU
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -478,8 +550,8 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
       },
       body: JSON.stringify({
         model,
-        temperature: 0.05,
-        max_tokens: 780,
+        temperature: 0.1,
+        max_tokens: 1150,
         messages: [
           {
             role: "user",
@@ -511,7 +583,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
   return extractJson(content);
 }
 
-async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
+async function runGroqBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
   if (Date.now() < runtimeState.groqVisionDisabledUntil) {
     throw new Error("Groq Vision tạm bỏ qua (không có model ảnh)");
   }
@@ -546,7 +618,7 @@ async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
           model,
           prompt,
           imageBase64,
-          timeoutMs: Math.min(CONFIG.GROQ_ATTEMPT_TIMEOUT_MS, attemptLeft)
+          timeoutMs: Math.min(CONFIG.GROQ_BACKUP_TIMEOUT_MS, attemptLeft)
         });
         if (result && typeof result === "object") {
           return { result, provider: `groq:${model}` };
@@ -572,77 +644,7 @@ async function runGroqVision({ apiKeys, prompt, imageBase64, deadline }) {
     runtimeState.groqVisionDisabledUntil = Date.now() + CONFIG.MODELS_CACHE_TTL_MS;
   }
 
-  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Groq không phản hồi");
-  finalErr.isRateLimit = errors.some((e) => e.includes("429"));
-  throw finalErr;
-}
-
-// ==========================================
-// 6. TẦNG 2: GEMINI FLASH SIÊU NHANH
-// ==========================================
-async function runGeminiBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
-  const cleanBase64 = String(imageBase64).replace(/^data:image\/\w+;base64,/, "");
-  const errors = [];
-
-  for (const model of CONFIG.GEMINI_BACKUP_MODELS) {
-    if (runtimeState.badGeminiModels.has(model)) continue;
-
-    for (const apiKey of apiKeys.slice(0, 2)) {
-      const remaining = deadline - Date.now();
-      if (remaining < 1000) break;
-
-      try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(apiKey)}`;
-        const generationConfig = {
-          temperature: 0.05,
-          maxOutputTokens: 780,
-          responseMimeType: "application/json"
-        };
-        if (/3\.8-flash|3\.6-flash|2\.5-flash/.test(model)) {
-          generationConfig.thinkingConfig = { thinkingBudget: 0 };
-        }
-
-        const res = await fetchWithTimeout(
-          endpoint,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              contents: [
-                {
-                  role: "user",
-                  parts: [
-                    { text: prompt },
-                    { inlineData: { mimeType: "image/jpeg", data: cleanBase64 } }
-                  ]
-                }
-              ],
-              generationConfig
-            })
-          },
-          Math.min(CONFIG.GEMINI_BACKUP_TIMEOUT_MS, remaining)
-        );
-
-        const rawText = await res.text();
-        if (!res.ok) {
-          if (res.status === 404) runtimeState.badGeminiModels.add(model);
-          else if (res.status === 429) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-          else if (res.status === 401 || res.status === 403) markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
-          throw new Error(`Gemini(${model}) HTTP ${res.status}`);
-        }
-
-        const parsed = JSON.parse(rawText.trim());
-        const content = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!content) throw new Error(`Gemini(${model}): Empty content`);
-        return { result: extractJson(content), provider: `gemini:${model}` };
-      } catch (err) {
-        errors.push(err.message);
-        if (err.message.includes("404") || err.message.includes("503")) break;
-      }
-    }
-  }
-
-  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Gemini backup unavailable");
+  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Groq dự phòng không phản hồi");
   finalErr.isRateLimit = errors.some((e) => e.includes("429"));
   throw finalErr;
 }
@@ -737,7 +739,6 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
     /trường học|tổ chức|thương hiệu|nhà hàng|quán ăn|shop|workshop|di tích/i.test(payload.loai_doi_tuong);
   const isFood = /thức ăn|đồ uống|món ăn|nước uống|thực phẩm/i.test(payload.loai_doi_tuong);
 
-  // NHÁNH 1: Xác thực Trường học, Thương hiệu, Di tích, Quán ăn
   if (isPlaceOrBrand) {
     const cityHint = detectLocalCityName(areaPoint, locationContext);
     const hasRegionInName = /hội an|đà nẵng|quảng nam|hà nội|tp\.?hcm|hồ chí minh|huế/i.test(
@@ -818,7 +819,6 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
     return attachMapLinks(payload, { areaPoint, locationContext });
   }
 
-  // NHÁNH 2: Tra giá sản phẩm / đồ vật
   const hasBrandText = Boolean(payload._ocr && !/^không có chữ$/i.test(payload._ocr) && payload._ocr.length >= 3);
   if (isFood && !hasBrandText) return payload;
   if (!hasBrandText && /\d/.test(payload.nien_dai_hoac_gia)) return payload;
@@ -841,7 +841,7 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
 }
 
 // ==========================================
-// 8. TRỢ LÝ AI THÔNG MINH
+// 8. TRỢ LÝ AI THÔNG MINH (GROQ CHÍNH -> GEMINI DỰ PHÒNG)
 // ==========================================
 async function searchWebContextForChat(userText, lastScan) {
   if (!userText) return "";
@@ -956,7 +956,7 @@ async function handleGeminiBackupChat({ apiKeys, messages, locationContext, last
     parts: [{ text: String(m.content || "") }]
   }));
 
-  for (const model of CONFIG.GEMINI_BACKUP_MODELS) {
+  for (const model of CONFIG.GEMINI_VISION_MODELS) {
     if (runtimeState.badGeminiModels.has(model)) continue;
     for (const apiKey of apiKeys.slice(0, 2)) {
       try {
@@ -1281,7 +1281,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 10. ENTRY POINT SERVERLESS HANDLER
+// 10. ENTRY POINT SERVERLESS HANDLER (GEMINI VISION CHÍNH -> GROQ DỰ PHÒNG)
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1295,6 +1295,7 @@ module.exports = async (req, res) => {
   try {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
 
+    // --- 1. ĐỌC THUYẾT MINH ---
     if (body.mode === "tts") {
       try {
         const audioBase64 = await generateVoiceBase64(body.text);
@@ -1305,16 +1306,17 @@ module.exports = async (req, res) => {
       }
     }
 
-    const groqKeys = collectApiKeys("GROQ_API_KEY");
     const geminiKeys = collectApiKeys("GEMINI_API_KEY");
+    const groqKeys = collectApiKeys("GROQ_API_KEY");
 
-    if (!groqKeys.length && !geminiKeys.length) {
+    if (!geminiKeys.length && !groqKeys.length) {
       return res.status(500).json({
         error: CONFIG.FRIENDLY_ERROR,
-        debug: "Thiếu biến môi trường GROQ_API_KEY và GEMINI_API_KEY trên Vercel"
+        debug: "Thiếu biến môi trường GEMINI_API_KEY và GROQ_API_KEY trên Vercel"
       });
     }
 
+    // --- 2. CHATBOT THÔNG MINH (Groq chính -> Gemini dự phòng) ---
     if (body.mode === "chat") {
       if (groqKeys.length) {
         try {
@@ -1341,6 +1343,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
+    // --- 3. QUÉT ẢNH (GEMINI CHÍNH -> GROQ DỰ PHÒNG -> TỰ XÁC THỰC GOOGLE) ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1358,38 +1361,44 @@ module.exports = async (req, res) => {
       const prompt = buildVisionPrompt(locationContext);
 
       let visionOutput = null;
-      let groqError = null;
+      let geminiError = null;
 
-      if (groqKeys.length && Date.now() >= runtimeState.groqVisionDisabledUntil) {
+      // Bước 1: Gọi thẳng Gemini ngay lập tức (0ms trễ)
+      if (geminiKeys.length) {
         try {
-          visionOutput = await runGroqVision({
-            apiKeys: groqKeys,
+          visionOutput = await runGeminiPrimaryVision({
+            apiKeys: geminiKeys,
             prompt,
             imageBase64,
-            deadline: Math.min(deadline, Date.now() + 3400)
+            deadline: Math.min(deadline, Date.now() + 5400)
           });
         } catch (err) {
-          groqError = err;
-          console.error("[Groq Vision Fallback Reason]:", err.message);
+          geminiError = err;
+          console.error("[Gemini Vision Fallback Reason]:", err.message);
         }
       }
 
+      // Bước 2: Dự phòng sang Groq chỉ khi Gemini lỗi toàn tập
       if (!visionOutput) {
-        if (geminiKeys.length) {
+        if (groqKeys.length && Date.now() >= runtimeState.groqVisionDisabledUntil && deadline - Date.now() >= 1400) {
           try {
-            visionOutput = await runGeminiBackupVision({
-              apiKeys: geminiKeys,
+            visionOutput = await runGroqBackupVision({
+              apiKeys: groqKeys,
               prompt,
               imageBase64,
               deadline
             });
-          } catch (gemErr) {
-            const combinedErr = new Error(`Groq: ${groqError?.message || "Skip"} || Gemini: ${gemErr.message}`);
-            combinedErr.isRateLimit = Boolean(groqError?.isRateLimit || gemErr?.isRateLimit);
+          } catch (groqErr) {
+            const combinedErr = new Error(
+              `Gemini: ${geminiError?.message || "N/A"} || Groq Backup: ${groqErr.message}`
+            );
+            combinedErr.isRateLimit = Boolean(geminiError?.isRateLimit || groqErr?.isRateLimit);
             throw combinedErr;
           }
-        } else if (groqError) {
-          throw groqError;
+        } else if (geminiError) {
+          throw geminiError;
+        } else {
+          throw new Error("Thiếu GEMINI_API_KEY hoạt động để quét ảnh");
         }
       }
 
@@ -1401,8 +1410,9 @@ module.exports = async (req, res) => {
 
       if (payload.error) return payload;
 
+      // Bước 3: Tự xác thực địa chỉ/năm thành lập/giá qua Google nếu còn quỹ thời gian
       const timeLeftForSerper = deadline - Date.now();
-      if (timeLeftForSerper >= 800) {
+      if (timeLeftForSerper >= 850) {
         payload = await autoVerifyWithGoogle(payload, {
           areaPoint,
           locationContext,
