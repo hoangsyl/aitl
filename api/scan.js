@@ -444,10 +444,11 @@ async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIM
 }
 
 async function callGroqVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
+  const isQwen38 = /qwen3\.8/i.test(model);
   const payload = {
     model,
     temperature: 0.1,
-    max_tokens: 1200,
+    max_tokens: isQwen38 ? 850 : 1100, // Dưới trần 1.000 OTPM của Qwen 3.8 trên Groq Free
     messages: [
       {
         role: "user",
@@ -460,7 +461,7 @@ async function callGroqVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
   };
 
   // Tắt suy luận nháp trên Qwen 3.8 để trả JSON tức thì (~1.5–2.5s)
-  if (/qwen3\.8/i.test(model)) {
+  if (isQwen38) {
     payload.reasoning_effort = "none";
   }
 
@@ -1356,7 +1357,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 10. ENTRY POINT SERVERLESS HANDLER ()
+// 10. ENTRY POINT SERVERLESS HANDLER (GROQ ~2s CHÍNH -> OPENROUTER BACKUP)
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1391,7 +1392,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // --- 2. CHATBOT THÔNG MINH  ---
+    // --- 2. CHATBOT THÔNG MINH (Groq chính -> OpenRouter Free dự phòng) ---
     if (body.mode === "chat") {
       if (groqKeys.length) {
         try {
@@ -1418,7 +1419,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. QUÉT ẢNH GROQ QWEN  ---
+    // --- 3. QUÉT ẢNH (GROQ QWEN 3.8 ~2s CHÍNH -> OPENROUTER FREE DỰ PHÒNG -> GOOGLE VERIFY) ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
