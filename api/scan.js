@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - High-Speed OpenRouter Free Vision (Hedged + Throughput) + Groq Chat + Auto-Verify
+ * AIvolution Team - Groq Vision Primary (qwen3.8-27b ~2s) + OpenRouter Free Backup + Auto-Verify
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -7,19 +7,22 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (TỐI ƯU TỐC ĐỘ 3–5s)
+// 1. CẤU HÌNH HỆ THỐNG (GROQ VISION CHÍNH ~2s – OPENROUTER DỰ PHÒNG)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
+  GROQ_VISION_MODELS: [
+    "qwen/qwen3.8-27b",
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "meta-llama/llama-4-maverick-17b-128e-instruct"
+  ],
   OPENROUTER_VISION_MODELS: [
-    "openrouter/free",
-    "qwen/qwen2.5-vl-72b-instruct:free",
-    "qwen/qwen2.5-vl-32b-instruct:free",
     "meta-llama/llama-3.2-11b-vision-instruct:free",
     "mistralai/mistral-small-3.1-24b-instruct:free",
     "google/gemma-3-27b-it:free",
-    "google/gemma-4-26b-a4b-it:free",
-    "nvidia/nemotron-3.5-super-vl:free"
+    "openrouter/free",
+    "qwen/qwen2.5-vl-32b-instruct:free",
+    "qwen/qwen2.5-vl-72b-instruct:free"
   ],
   OPENROUTER_CHAT_MODELS: [
     "openrouter/free",
@@ -27,9 +30,9 @@ const CONFIG = {
     "nvidia/nemotron-3.5-lightning:free"
   ],
   TOTAL_SCAN_BUDGET_MS: 9500,
-  HEDGE_DELAY_MS: 2200,
-  OPENROUTER_VISION_TIMEOUT_MS: 4600,
-  GROQ_BACKUP_TIMEOUT_MS: 2800,
+  GROQ_VISION_TIMEOUT_MS: 3800,
+  OPENROUTER_BACKUP_TIMEOUT_MS: 5200,
+  HEDGE_DELAY_MS: 2600,
   GROQ_MODELS_TIMEOUT_MS: 1200,
   SERPER_TIMEOUT_MS: 750,
   CHAT_TIMEOUT_MS: 4500,
@@ -48,7 +51,6 @@ const CONFIG = {
 const runtimeState = {
   cachedGroqModels: null,
   cachedGroqModelsAt: 0,
-  groqVisionDisabledUntil: 0,
   badGroqVisionModels: new Set(),
   badOpenRouterModels: new Set(),
   modelCooldownUntil: new Map(), // Cách ly model bị 429/502/503 hoặc Empty content trong 60s
@@ -405,7 +407,160 @@ Luật:
 }
 
 // ==========================================
-// 5. TẦNG 1 (QUÉT ẢNH CHÍNH TỐC ĐỘ CAO): OPENROUTER THROUGHPUT + BẮN GỐI ĐẦU 2.2s
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH SIÊU TỐC ~2s): GROQ LPU (QWEN 3.8 27B)
+// ==========================================
+async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
+  const now = Date.now();
+  if (
+    runtimeState.cachedGroqModels &&
+    now - runtimeState.cachedGroqModelsAt < CONFIG.MODELS_CACHE_TTL_MS
+  ) {
+    return runtimeState.cachedGroqModels;
+  }
+
+  return runSingleFlight("groq:models", async () => {
+    const res = await fetchWithTimeout(
+      "https://api.groq.com/openai/v1/models",
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+      timeoutMs
+    );
+    if (!res.ok) throw new Error(`Groq models HTTP ${res.status}`);
+
+    const data = await res.json();
+    const activeModels = (data.data || [])
+      .map((m) => m.id)
+      .filter(
+        (id) =>
+          id &&
+          !/whisper|tts|guard|safeguard|embed|prompt-guard|playai|orpheus|compound/i.test(id)
+      );
+
+    if (!activeModels.length) throw new Error("Không tìm thấy model khả dụng trên Groq");
+
+    runtimeState.cachedGroqModels = activeModels;
+    runtimeState.cachedGroqModelsAt = Date.now();
+    return activeModels;
+  });
+}
+
+async function callGroqVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
+  const payload = {
+    model,
+    temperature: 0.1,
+    max_tokens: 1200,
+    messages: [
+      {
+        role: "user",
+        content: [
+          { type: "text", text: prompt },
+          { type: "image_url", image_url: { url: imageUrl } }
+        ]
+      }
+    ]
+  };
+
+  // Tắt suy luận nháp trên Qwen 3.8 để trả JSON tức thì (~1.5–2.5s)
+  if (/qwen3\.8/i.test(model)) {
+    payload.reasoning_effort = "none";
+  }
+
+  const res = await fetchWithTimeout(
+    "https://api.groq.com/openai/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify(payload)
+    },
+    timeoutMs
+  );
+
+  const rawText = await res.text();
+  if (!res.ok) {
+    let msg = rawText.slice(0, 140);
+    try {
+      msg = JSON.parse(rawText)?.error?.message || msg;
+    } catch (_) {}
+    const err = new Error(`Groq(${model}) HTTP ${res.status}: ${msg}`);
+    err.status = res.status;
+    throw err;
+  }
+
+  const parsed = JSON.parse(rawText.trim());
+  const msgObj = parsed.choices?.[0]?.message || {};
+  const content = msgObj.content || msgObj.reasoning || "";
+  if (!content) throw new Error(`Groq(${model}): Empty content`);
+  return extractJson(content);
+}
+
+async function runGroqPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
+  const imageUrl = String(imageBase64).startsWith("data:image")
+    ? imageBase64
+    : `data:image/jpeg;base64,${imageBase64}`;
+  const errors = [];
+  const now = Date.now();
+
+  const availableModels = CONFIG.GROQ_VISION_MODELS.filter(
+    (m) => !runtimeState.badGroqVisionModels.has(m)
+  );
+  const orderedModels = [
+    ...availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now),
+    ...availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) > now)
+  ];
+
+  for (const model of orderedModels) {
+    const remainingForModel = deadline - Date.now();
+    if (remainingForModel < 1100) break;
+
+    for (const apiKey of apiKeys.slice(0, 3)) {
+      const remaining = deadline - Date.now();
+      if (remaining < 1100) break;
+
+      try {
+        const result = await callGroqVision({
+          apiKey,
+          model,
+          prompt,
+          imageUrl,
+          timeoutMs: Math.min(CONFIG.GROQ_VISION_TIMEOUT_MS, remaining)
+        });
+        if (result && typeof result === "object") {
+          return { result, provider: `groq:${String(model).split("/").pop()}` };
+        }
+      } catch (err) {
+        const msg = err?.name === "AbortError" ? `Groq(${model}) Timeout` : err.message;
+        errors.push(msg);
+
+        if (err.status === 400 || err.status === 404) {
+          runtimeState.badGroqVisionModels.add(model);
+          break; // Model không hỗ trợ ảnh hoặc đã gỡ -> nhảy ngay model tiếp theo
+        }
+        if (err.status === 429) {
+          markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+          continue; // Đổi sang GROQ_API_KEY tiếp theo
+        }
+        if (err.status === 401 || err.status === 403) {
+          markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+          continue;
+        }
+        if (err.status === 502 || err.status === 503 || msg.includes("Timeout")) {
+          runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+          break;
+        }
+      }
+    }
+  }
+
+  const finalErr = new Error(errors.slice(0, 3).join(" | ") || "Groq Vision không phản hồi");
+  finalErr.isRateLimit = errors.some((e) => e.includes("429"));
+  finalErr.isOverloaded = errors.some((e) => e.includes("503") || e.includes("502") || e.includes("Timeout"));
+  throw finalErr;
+}
+
+// ==========================================
+// 6. TẦNG 2 (DỰ PHÒNG CHỐNG SẬP): OPENROUTER FREE VISION (THROUGHPUT + BẮN GỐI ĐẦU)
 // ==========================================
 async function callSingleOpenRouterVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
   const res = await fetchWithTimeout(
@@ -421,9 +576,9 @@ async function callSingleOpenRouterVision({ apiKey, model, prompt, imageUrl, tim
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 1100,
+        max_tokens: 1200,
         reasoning: { enabled: false },
-        provider: { sort: "throughput" }, // Ưu tiên máy chủ trả chữ nhanh nhất
+        provider: { sort: "throughput" },
         messages: [
           {
             role: "user",
@@ -473,7 +628,7 @@ async function callSingleOpenRouterVision({ apiKey, model, prompt, imageUrl, tim
   };
 }
 
-async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
+async function runOpenRouterBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
   const imageUrl = String(imageBase64).startsWith("data:image")
     ? imageBase64
     : `data:image/jpeg;base64,${imageBase64}`;
@@ -491,7 +646,6 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
   const backupKey = apiKeys[1] || apiKeys[0];
   const errors = [];
 
-  // Đua gối đầu (Hedged Request): Gọi Model 1 ngay, nếu lỗi sớm hoặc quá 2.2s chưa xong thì bắn song song Model 2
   const m1 = orderedModels[0];
   const m2 = orderedModels[1];
   if (m1 && m2) {
@@ -505,7 +659,7 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
         model: m1,
         prompt,
         imageUrl,
-        timeoutMs: Math.min(CONFIG.OPENROUTER_VISION_TIMEOUT_MS, deadline - Date.now())
+        timeoutMs: Math.min(CONFIG.OPENROUTER_BACKUP_TIMEOUT_MS, deadline - Date.now())
       });
 
       const p2 = new Promise((resolve, reject) => {
@@ -520,7 +674,7 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
             model: m2,
             prompt,
             imageUrl,
-            timeoutMs: Math.min(CONFIG.OPENROUTER_VISION_TIMEOUT_MS, left)
+            timeoutMs: Math.min(CONFIG.OPENROUTER_BACKUP_TIMEOUT_MS, left)
           }).then(resolve, reject);
         };
         hedgeTimer = setTimeout(triggerP2, CONFIG.HEDGE_DELAY_MS);
@@ -540,7 +694,6 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
     }
   }
 
-  // Nếu 2 model đầu đều lỗi -> thử nhanh model thứ 3 và thứ 4
   for (const model of orderedModels.slice(2, 4)) {
     const remaining = deadline - Date.now();
     if (remaining < 1400) break;
@@ -550,7 +703,7 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
         model,
         prompt,
         imageUrl,
-        timeoutMs: Math.min(3600, remaining)
+        timeoutMs: Math.min(3800, remaining)
       });
     } catch (err) {
       errors.push(err?.name === "AbortError" ? `OpenRouter(${model}) Timeout` : err.message);
@@ -560,169 +713,6 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
   const finalErr = new Error(errors.slice(0, 3).join(" | ") || "OpenRouter không phản hồi");
   finalErr.isRateLimit = errors.some((e) => e.includes("429"));
   finalErr.isOverloaded = errors.some((e) => e.includes("503") || e.includes("502") || e.includes("Timeout"));
-  throw finalErr;
-}
-
-// ==========================================
-// 6. TẦNG 2 (DỰ PHÒNG QUÉT ẢNH + CHÍNH CHO CHATBOT): GROQ LPU
-// ==========================================
-async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
-  const now = Date.now();
-  if (
-    runtimeState.cachedGroqModels &&
-    now - runtimeState.cachedGroqModelsAt < CONFIG.MODELS_CACHE_TTL_MS
-  ) {
-    return runtimeState.cachedGroqModels;
-  }
-
-  return runSingleFlight("groq:models", async () => {
-    const res = await fetchWithTimeout(
-      "https://api.groq.com/openai/v1/models",
-      { headers: { Authorization: `Bearer ${apiKey}` } },
-      timeoutMs
-    );
-    if (!res.ok) throw new Error(`Groq models HTTP ${res.status}`);
-
-    const data = await res.json();
-    const activeModels = (data.data || [])
-      .map((m) => m.id)
-      .filter(
-        (id) =>
-          id &&
-          !/whisper|tts|guard|safeguard|embed|prompt-guard|playai|orpheus|compound/i.test(id)
-      );
-
-    if (!activeModels.length) throw new Error("Không tìm thấy model khả dụng trên Groq");
-
-    runtimeState.cachedGroqModels = activeModels;
-    runtimeState.cachedGroqModelsAt = Date.now();
-    return activeModels;
-  });
-}
-
-function getStrictGroqVisionModels(liveModels = []) {
-  const trueVisionRegex = /vision|vl|multimodal|omni|pixtral|maverick|scout|llama-4/i;
-  const excludeRegex = /guard|safeguard|whisper|tts|embed|gpt-oss|deepseek|mixtral|llama-3|allam|gemma/i;
-
-  return [...new Set(liveModels)].filter(
-    (m) =>
-      trueVisionRegex.test(m) &&
-      !excludeRegex.test(m) &&
-      !runtimeState.badGroqVisionModels.has(m)
-  );
-}
-
-async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs }) {
-  const imageUrl = String(imageBase64).startsWith("data:image")
-    ? imageBase64
-    : `data:image/jpeg;base64,${imageBase64}`;
-
-  const res = await fetchWithTimeout(
-    "https://api.groq.com/openai/v1/chat/completions",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        max_tokens: 1100,
-        messages: [
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              { type: "image_url", image_url: { url: imageUrl } }
-            ]
-          }
-        ]
-      })
-    },
-    timeoutMs
-  );
-
-  const rawText = await res.text();
-  if (!res.ok) {
-    let msg = rawText.slice(0, 140);
-    try {
-      msg = JSON.parse(rawText)?.error?.message || msg;
-    } catch (_) {}
-    const err = new Error(`Groq(${model}) HTTP ${res.status}: ${msg}`);
-    err.status = res.status;
-    throw err;
-  }
-
-  const parsed = JSON.parse(rawText.trim());
-  const content = parsed.choices?.[0]?.message?.content;
-  if (!content) throw new Error(`Groq(${model}): Empty content`);
-  return extractJson(content);
-}
-
-async function runGroqBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
-  if (Date.now() < runtimeState.groqVisionDisabledUntil) {
-    throw new Error("Groq Vision tạm bỏ qua (không có model ảnh)");
-  }
-
-  const errors = [];
-  let liveModels = [];
-
-  try {
-    liveModels = await fetchWorkingGroqModels(apiKeys[0], CONFIG.GROQ_MODELS_TIMEOUT_MS);
-  } catch (e) {
-    throw new Error(`GroqModels: ${e.message}`);
-  }
-
-  const models = getStrictGroqVisionModels(liveModels).slice(0, 2);
-  if (!models.length) {
-    runtimeState.groqVisionDisabledUntil = Date.now() + CONFIG.MODELS_CACHE_TTL_MS;
-    throw new Error("Groq không có model vision khả dụng");
-  }
-
-  for (const apiKey of apiKeys.slice(0, 2)) {
-    const remaining = deadline - Date.now();
-    if (remaining < 1200) break;
-
-    for (const model of models) {
-      if (runtimeState.badGroqVisionModels.has(model)) continue;
-      const attemptLeft = deadline - Date.now();
-      if (attemptLeft < 1000) break;
-
-      try {
-        const result = await callGroqVision({
-          apiKey,
-          model,
-          prompt,
-          imageBase64,
-          timeoutMs: Math.min(CONFIG.GROQ_BACKUP_TIMEOUT_MS, attemptLeft)
-        });
-        if (result && typeof result === "object") {
-          return { result, provider: `groq:${model}` };
-        }
-      } catch (err) {
-        errors.push(err.message || `Groq(${model}): Failed`);
-        if (err.status === 400 || err.status === 404) {
-          runtimeState.badGroqVisionModels.add(model);
-          continue;
-        }
-        if (err.status === 429 || err.status === 401 || err.status === 403) {
-          markKeyCooldown(
-            apiKey,
-            err.status === 429 ? CONFIG.KEY_COOLDOWN_429_MS : CONFIG.KEY_COOLDOWN_AUTH_MS
-          );
-          break;
-        }
-      }
-    }
-  }
-
-  if (models.every((m) => runtimeState.badGroqVisionModels.has(m))) {
-    runtimeState.groqVisionDisabledUntil = Date.now() + CONFIG.MODELS_CACHE_TTL_MS;
-  }
-
-  const finalErr = new Error(errors.slice(0, 2).join(" | ") || "Groq dự phòng không phản hồi");
-  finalErr.isRateLimit = errors.some((e) => e.includes("429"));
   throw finalErr;
 }
 
@@ -896,7 +886,6 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
     return attachMapLinks(payload, { areaPoint, locationContext });
   }
 
-  // Bỏ qua tra Google nếu là đồ vật thông thường không có chữ/thương hiệu rõ -> tiết kiệm ~0.8s
   const hasBrandText = Boolean(payload._ocr && !/^không có chữ$/i.test(payload._ocr) && payload._ocr.length >= 3);
   if (!hasBrandText || isFood) return payload;
 
@@ -1367,7 +1356,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 10. ENTRY POINT SERVERLESS HANDLER (OPENROUTER TỐC ĐỘ CAO -> GROQ BACKUP)
+// 10. ENTRY POINT SERVERLESS HANDLER ()
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1392,17 +1381,17 @@ module.exports = async (req, res) => {
       }
     }
 
-    const openRouterKeys = collectApiKeys("OPENROUTER_API_KEY");
     const groqKeys = collectApiKeys("GROQ_API_KEY");
+    const openRouterKeys = collectApiKeys("OPENROUTER_API_KEY");
 
-    if (!openRouterKeys.length && !groqKeys.length) {
+    if (!groqKeys.length && !openRouterKeys.length) {
       return res.status(500).json({
         error: CONFIG.FRIENDLY_ERROR,
-        debug: "Thiếu biến môi trường OPENROUTER_API_KEY trên Vercel"
+        debug: "Thiếu biến môi trường GROQ_API_KEY và OPENROUTER_API_KEY trên Vercel"
       });
     }
 
-    // --- 2. CHATBOT THÔNG MINH (Groq chính -> OpenRouter Free dự phòng) ---
+    // --- 2. CHATBOT THÔNG MINH  ---
     if (body.mode === "chat") {
       if (groqKeys.length) {
         try {
@@ -1429,7 +1418,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. QUÉT ẢNH (OPENROUTER TỐC ĐỘ CAO -> GROQ BACKUP -> TỰ XÁC THỰC GOOGLE) ---
+    // --- 3. QUÉT ẢNH GROQ QWEN  ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1447,45 +1436,46 @@ module.exports = async (req, res) => {
       const prompt = buildVisionPrompt(locationContext);
 
       let visionOutput = null;
-      let openRouterError = null;
+      let groqError = null;
 
-      // Bước 1: Gọi OpenRouter Free Vision (bắn gối đầu sau 2.2s + ưu tiên throughput)
-      if (openRouterKeys.length) {
+      // Bước 1: Gọi thẳng Groq Vision (qwen/qwen3.8-27b siêu tốc ~2s)
+      if (groqKeys.length) {
+        const groqBudgetMs = openRouterKeys.length ? 4500 : 8500;
         try {
-          visionOutput = await runOpenRouterPrimaryVision({
-            apiKeys: openRouterKeys,
+          visionOutput = await runGroqPrimaryVision({
+            apiKeys: groqKeys,
             prompt,
             imageBase64,
-            deadline: Math.min(deadline, Date.now() + 8500)
+            deadline: Math.min(deadline, Date.now() + groqBudgetMs)
           });
         } catch (err) {
-          openRouterError = err;
-          console.error("[OpenRouter Vision Fallback Reason]:", err.message);
+          groqError = err;
+          console.error("[Groq Vision Fallback Reason]:", err.message);
         }
       }
 
-      // Bước 2: Dự phòng sang Groq Vision nếu OpenRouter lỗi toàn tập
+      // Bước 2: Dự phòng sang OpenRouter Free Vision nếu Groq lỗi hoặc hết hạn mức
       if (!visionOutput) {
-        if (groqKeys.length && Date.now() >= runtimeState.groqVisionDisabledUntil && deadline - Date.now() >= 1400) {
+        if (openRouterKeys.length && deadline - Date.now() >= 1500) {
           try {
-            visionOutput = await runGroqBackupVision({
-              apiKeys: groqKeys,
+            visionOutput = await runOpenRouterBackupVision({
+              apiKeys: openRouterKeys,
               prompt,
               imageBase64,
               deadline
             });
-          } catch (groqErr) {
+          } catch (orErr) {
             const combinedErr = new Error(
-              `OpenRouter: ${openRouterError?.message || "N/A"} || Groq: ${groqErr.message}`
+              `Groq: ${groqError?.message || "N/A"} || OpenRouter: ${orErr.message}`
             );
-            combinedErr.isRateLimit = Boolean(openRouterError?.isRateLimit || groqErr?.isRateLimit);
-            combinedErr.isOverloaded = Boolean(openRouterError?.isOverloaded);
+            combinedErr.isRateLimit = Boolean(groqError?.isRateLimit || orErr?.isRateLimit);
+            combinedErr.isOverloaded = Boolean(groqError?.isOverloaded || orErr?.isOverloaded);
             throw combinedErr;
           }
-        } else if (openRouterError) {
-          throw openRouterError;
+        } else if (groqError) {
+          throw groqError;
         } else {
-          throw new Error("Thiếu biến môi trường OPENROUTER_API_KEY trên Vercel");
+          throw new Error("Thiếu biến môi trường GROQ_API_KEY trên Vercel");
         }
       }
 
