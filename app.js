@@ -220,6 +220,8 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     const expModal = document.getElementById("exploreHubModal");
     if (expModal && !expModal.hidden) return;
+    const fdModal = document.getElementById("fd-modal");
+    if (fdModal && !fdModal.hidden) return;
 
     if (confirmDialog && confirmDialog.open) {
       confirmDialog.close();
@@ -2027,7 +2029,6 @@ initGPS();
       </div>
     `;
 
-    // Tự động chuyển sang khung dự phòng nếu ảnh từ báo gốc bị lỗi tải
     paneEl.querySelectorAll("img.explore-cover-img, img.explore-list-thumb").forEach((img) => {
       img.addEventListener("error", () => {
         const fb = document.createElement("span");
@@ -2104,7 +2105,6 @@ initGPS();
     loadTabData(tab, false);
   }
 
-  // Dùng IntersectionObserver đồng bộ khi vuốt ngang Mini-Tab (không poll scroll)
   const paneObserver = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
@@ -2198,4 +2198,271 @@ initGPS();
   });
 })();
 
+// ==========================================
+// AIvolution - FOOD & DRINKS QUANH BẠN (GPS GOOGLE MAPS)
+// ==========================================
+(function initFoodDrinksNearby() {
+  const CACHE_PREFIX = "aivolution_fd_v1";
+  const CACHE_TTL_MS = 15 * 60 * 1000;
+  const MOVE_THRESHOLD_M = 250;
 
+  const openBtn = document.getElementById("fd-open-btn");
+  const modal = document.getElementById("fd-modal");
+  const panel = document.getElementById("fd-panel");
+  const closeBtn = document.getElementById("fd-close-btn");
+  const refreshBtn = document.getElementById("fd-refresh-btn");
+  const statusEl = document.getElementById("fd-status");
+  const bodyEl = document.getElementById("fd-body");
+  const listEl = document.getElementById("fd-list");
+  const tabs = document.querySelectorAll(".fd-tab");
+
+  if (!openBtn || !modal || !panel || !listEl) return;
+
+  let currentCategory = "all";
+  let currentRadius = 1000;
+  let lastPlaces = [];
+  let lastFocusedEl = null;
+
+  const prefersReducedMotion = () =>
+    window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function askAIForPlace(place) {
+    const prompt =
+      `Review nhanh "${place.name}" (${place.type}, ${place.rating.toFixed(1)} sao` +
+      `${place.address ? `, địa chỉ: ${place.address}` : ""}). ` +
+      `Quán này có món gì ngon đáng thử và tầm giá khoảng bao nhiêu?`;
+
+    closeModal();
+    if (typeof navigateTo === "function") navigateTo("chat");
+
+    const input = document.getElementById("chatInput");
+    const form = document.getElementById("chatForm");
+    if (input && form) {
+      input.value = prompt;
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+      } else {
+        form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+      }
+    }
+  }
+
+  function renderSkeletons() {
+    bodyEl.setAttribute("aria-busy", "true");
+    listEl.innerHTML = Array.from({ length: 5 })
+      .map(
+        () => `
+        <li class="fd-skeleton">
+          <div class="fd-skel-line w-70"></div>
+          <div class="fd-skel-line w-50"></div>
+        </li>`
+      )
+      .join("");
+  }
+
+  function renderPlaces(places) {
+    lastPlaces = places;
+    bodyEl.setAttribute("aria-busy", "false");
+
+    if (!places.length) {
+      const nextRadius = currentRadius < 2000 ? 2000 : 3000;
+      listEl.innerHTML = `
+        <li class="fd-state-box">
+          <p class="fd-state-text">
+            Không tìm thấy địa điểm từ 4.0★ trở lên trong bán kính ${currentRadius / 1000}km.
+          </p>
+          ${
+            currentRadius < 3000
+              ? `<button type="button" id="fd-expand-btn" class="fd-action-btn">
+                  Mở rộng quét lên ${nextRadius / 1000}km
+                </button>`
+              : ""
+          }
+        </li>`;
+      const expandBtn = document.getElementById("fd-expand-btn");
+      if (expandBtn) {
+        expandBtn.addEventListener("click", () => {
+          currentRadius = nextRadius;
+          scanNearby(true);
+        });
+      }
+      return;
+    }
+
+    listEl.innerHTML = places
+      .map((p, idx) => {
+        const distText =
+          p.distance < 1000 ? `${p.distance}m` : `${(p.distance / 1000).toFixed(1)}km`;
+        return `
+          <li class="fd-card">
+            <div class="fd-card-info">
+              <h3 class="fd-card-name">${escapeHtml(p.name)}</h3>
+              <p class="fd-card-meta">
+                <span class="fd-rating">★ ${p.rating.toFixed(1)}</span>
+                <span>(${p.reviews})</span>
+                <span aria-hidden="true">•</span>
+                <span>${distText}</span>
+                <span aria-hidden="true">•</span>
+                <span>${escapeHtml(p.type)}</span>
+              </p>
+              ${p.address ? `<p class="fd-card-addr">${escapeHtml(p.address)}</p>` : ""}
+            </div>
+            <div class="fd-card-actions">
+              <button type="button" class="fd-btn-ai" data-idx="${idx}" aria-label="Hỏi AI về ${escapeHtml(p.name)}">
+                AI
+              </button>
+              <a
+                class="fd-btn-maps"
+                href="${escapeHtml(p.mapsUrl)}"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Mở Google Maps chỉ đường tới ${escapeHtml(p.name)}"
+              >
+                Maps
+              </a>
+            </div>
+          </li>`;
+      })
+      .join("");
+  }
+
+  function renderError(message) {
+    bodyEl.setAttribute("aria-busy", "false");
+    statusEl.textContent = "Không thể quét vị trí";
+    listEl.innerHTML = `
+      <li class="fd-state-box is-error">
+        <p class="fd-state-text">${escapeHtml(message)}</p>
+        <button type="button" id="fd-retry-btn" class="fd-action-btn">Thử quét lại</button>
+      </li>`;
+    const retryBtn = document.getElementById("fd-retry-btn");
+    if (retryBtn) {
+      retryBtn.addEventListener("click", () => scanNearby(true));
+    }
+  }
+
+  function getGPS(forceFresh = false) {
+    if (!forceFresh && Number.isFinite(currentCoords?.lat) && Number.isFinite(currentCoords?.lng)) {
+      return Promise.resolve({ lat: currentCoords.lat, lng: currentCoords.lng });
+    }
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) {
+        return reject(new Error("Trình duyệt của bạn không hỗ trợ định vị GPS."));
+      }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          currentCoords.lat = pos.coords.latitude;
+          currentCoords.lng = pos.coords.longitude;
+          resolve({ lat: currentCoords.lat, lng: currentCoords.lng });
+        },
+        (err) => {
+          if (err.code === 1) {
+            reject(new Error("Bạn chưa cấp quyền GPS. Hãy bật vị trí cho trình duyệt rồi thử lại."));
+          } else {
+            reject(new Error("Không lấy được tín hiệu GPS. Vui lòng thử lại."));
+          }
+        },
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: forceFresh ? 0 : 60000 }
+      );
+    });
+  }
+
+  async function scanNearby(forceRefresh = false) {
+    statusEl.textContent = `Đang quét GPS trong ${currentRadius / 1000}km...`;
+    renderSkeletons();
+
+    try {
+      const coords = await getGPS(forceRefresh);
+      const cacheKey = `${CACHE_PREFIX}_${currentCategory}_${currentRadius}`;
+      const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+
+      const movedFar =
+        !cached ||
+        Math.hypot(coords.lat - cached.lat, coords.lng - cached.lng) * 111000 > MOVE_THRESHOLD_M;
+
+      if (!forceRefresh && cached && !movedFar && Date.now() - cached.ts < CACHE_TTL_MS) {
+        statusEl.textContent = `Top ${cached.places.length} nơi (★ cao → thấp) • ${currentRadius / 1000}km`;
+        renderPlaces(cached.places);
+        return;
+      }
+
+      const url = `/api/nearby-places?lat=${coords.lat}&lng=${coords.lng}&radius=${currentRadius}&category=${encodeURIComponent(currentCategory)}`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!res.ok) throw new Error(data.error || "Lỗi tải dữ liệu địa điểm.");
+
+      try {
+        localStorage.setItem(
+          cacheKey,
+          JSON.stringify({ lat: coords.lat, lng: coords.lng, ts: Date.now(), places: data.places })
+        );
+      } catch (_) {}
+
+      statusEl.textContent = `Top ${data.places.length} nơi (★ cao → thấp) • ${currentRadius / 1000}km`;
+      renderPlaces(data.places);
+    } catch (err) {
+      renderError(err?.message || "Đã xảy ra lỗi khi quét địa điểm.");
+    }
+  }
+
+  function openModal() {
+    lastFocusedEl = document.activeElement;
+    modal.hidden = false;
+    document.body.style.overflow = "hidden";
+    requestAnimationFrame(() => modal.classList.add("is-open"));
+    panel.focus();
+    scanNearby(false);
+  }
+
+  function closeModal() {
+    if (modal.hidden) return;
+    modal.classList.remove("is-open");
+    document.body.style.overflow = "";
+
+    const finishClose = () => {
+      if (!modal.classList.contains("is-open")) {
+        modal.hidden = true;
+      }
+      if (lastFocusedEl && typeof lastFocusedEl.focus === "function") {
+        lastFocusedEl.focus();
+      }
+    };
+
+    if (prefersReducedMotion()) {
+      finishClose();
+    } else {
+      setTimeout(finishClose, 180);
+    }
+  }
+
+  openBtn.addEventListener("click", openModal);
+  if (closeBtn) closeBtn.addEventListener("click", closeModal);
+  if (refreshBtn) refreshBtn.addEventListener("click", () => scanNearby(true));
+
+  modal.addEventListener("click", (e) => {
+    if (e.target === modal) closeModal();
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !modal.hidden) {
+      e.stopPropagation();
+      closeModal();
+    }
+  });
+
+  listEl.addEventListener("click", (e) => {
+    const btn = e.target.closest(".fd-btn-ai");
+    if (!btn) return;
+    const place = lastPlaces[Number(btn.dataset.idx)];
+    if (place) askAIForPlace(place);
+  });
+
+  tabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      currentCategory = tab.dataset.cat;
+      currentRadius = 1000;
+      tabs.forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
+      scanNearby(false);
+    });
+  });
+})();
