@@ -11,19 +11,24 @@ const crypto = require("crypto");
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  OPENROUTER_VISION_MODELS: [
+  OPENROUTER_VISION_FALLBACK_MODELS: [
+    "openrouter/free",
+    "qwen/qwen2.5-vl-72b-instruct:free",
+    "qwen/qwen2.5-vl-32b-instruct:free",
+    "meta-llama/llama-3.2-11b-vision-instruct:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
+    "google/gemma-3-27b-it:free",
     "google/gemma-4-26b-a4b-it:free",
-    "nvidia/nemotron-3.5-super-vl:free",
-    "google/gemma-4-31b-it:free",
-    "openrouter/free"
+    "nvidia/nemotron-3.5-super-vl:free"
   ],
   OPENROUTER_CHAT_MODELS: [
     "openrouter/free",
     "google/gemma-4-26b-a4b-it:free",
     "nvidia/nemotron-3.5-lightning:free"
   ],
-  TOTAL_SCAN_BUDGET_MS: 9300,
-  OPENROUTER_VISION_TIMEOUT_MS: 4300,
+  TOTAL_SCAN_BUDGET_MS: 10500,
+  OPENROUTER_VISION_TIMEOUT_MS: 4200,
+  OPENROUTER_MODELS_TIMEOUT_MS: 1500,
   GROQ_BACKUP_TIMEOUT_MS: 3000,
   GROQ_MODELS_TIMEOUT_MS: 1200,
   SERPER_TIMEOUT_MS: 800,
@@ -35,7 +40,7 @@ const CONFIG = {
   TTS_CACHE_TTL_MS: 30 * 60 * 1000,
   KEY_COOLDOWN_429_MS: 45 * 1000,
   KEY_COOLDOWN_AUTH_MS: 10 * 60 * 1000,
-  MODEL_COOLDOWN_503_MS: 60 * 1000,
+  MODEL_COOLDOWN_MS: 60 * 1000,
   FRIENDLY_ERROR:
     "Opps! Mình không thể nhận diện được, có lẽ do bạn chụp không rõ, bị mờ hoặc thiếu sáng. Bạn giữ chắc tay và chụp rõ hơn giúp mình nhé!"
 };
@@ -43,10 +48,12 @@ const CONFIG = {
 const runtimeState = {
   cachedGroqModels: null,
   cachedGroqModelsAt: 0,
+  cachedOpenRouterVisionModels: null,
+  cachedOpenRouterVisionModelsAt: 0,
   groqVisionDisabledUntil: 0,
   badGroqVisionModels: new Set(),
   badOpenRouterModels: new Set(),
-  modelCooldownUntil: new Map(), // Cách ly model bị 502/503 trong 60s
+  modelCooldownUntil: new Map(), // Cách ly model bị 429/502/503 hoặc Empty content trong 60s
   keyCooldownUntil: new Map(),
   rrIndex: Object.create(null),  // Round-robin chia tải đều tối đa 30 key/nguồn
   inFlight: new Map(),           // Single-flight gộp request trùng
@@ -428,8 +435,57 @@ LUẬT BẮT BUỘC:
 }
 
 // ==========================================
-// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): OPENROUTER FREE VISION + XOAY VÒNG KEY & MODEL
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): OPENROUTER FREE VISION + TỰ TÌM MODEL :FREE HỖ TRỢ ẢNH
 // ==========================================
+async function fetchLiveOpenRouterVisionModels(timeoutMs = CONFIG.OPENROUTER_MODELS_TIMEOUT_MS) {
+  const now = Date.now();
+  if (
+    runtimeState.cachedOpenRouterVisionModels &&
+    now - runtimeState.cachedOpenRouterVisionModelsAt < CONFIG.MODELS_CACHE_TTL_MS
+  ) {
+    return runtimeState.cachedOpenRouterVisionModels;
+  }
+
+  return runSingleFlight("openrouter:vision-models", async () => {
+    try {
+      const res = await fetchWithTimeout(
+        "https://openrouter.ai/api/v1/models",
+        {
+          headers: {
+            "HTTP-Referer": "https://aitl-teal.vercel.app",
+            "X-Title": "AIvolution"
+          }
+        },
+        timeoutMs
+      );
+      if (!res.ok) return CONFIG.OPENROUTER_VISION_FALLBACK_MODELS;
+
+      const data = await res.json();
+      const dynamicFreeVision = (data.data || [])
+        .filter((m) => {
+          const id = String(m?.id || "");
+          if (!id.endsWith(":free")) return false;
+          const mods = m?.architecture?.input_modalities || [];
+          return Array.isArray(mods) && mods.includes("image");
+        })
+        .map((m) => m.id);
+
+      const merged = [
+        "openrouter/free",
+        ...dynamicFreeVision,
+        ...CONFIG.OPENROUTER_VISION_FALLBACK_MODELS
+      ];
+      const unique = [...new Set(merged)];
+
+      runtimeState.cachedOpenRouterVisionModels = unique;
+      runtimeState.cachedOpenRouterVisionModelsAt = Date.now();
+      return unique;
+    } catch (_) {
+      return CONFIG.OPENROUTER_VISION_FALLBACK_MODELS;
+    }
+  });
+}
+
 async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
   const imageUrl = String(imageBase64).startsWith("data:image")
     ? imageBase64
@@ -437,7 +493,11 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
   const errors = [];
   const now = Date.now();
 
-  const availableModels = CONFIG.OPENROUTER_VISION_MODELS.filter(
+  const candidateModels = await fetchLiveOpenRouterVisionModels(
+    Math.min(CONFIG.OPENROUTER_MODELS_TIMEOUT_MS, Math.max(700, deadline - now - 2500))
+  );
+
+  const availableModels = candidateModels.filter(
     (m) => !runtimeState.badOpenRouterModels.has(m)
   );
   const readyModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now);
@@ -448,7 +508,7 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
     const remainingForModel = deadline - Date.now();
     if (remainingForModel < 1300) break;
 
-    for (const apiKey of apiKeys.slice(0, 3)) {
+    for (const apiKey of apiKeys.slice(0, 2)) {
       const remaining = deadline - Date.now();
       if (remaining < 1300) break;
 
@@ -466,7 +526,8 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
             body: JSON.stringify({
               model,
               temperature: 0.1,
-              max_tokens: 1150,
+              max_tokens: 1800,
+              reasoning: { enabled: false },
               messages: [
                 {
                   role: "user",
@@ -490,10 +551,11 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
 
           if (res.status === 404) {
             runtimeState.badOpenRouterModels.add(model);
-          } else if (res.status === 502 || res.status === 503) {
-            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_503_MS);
-          } else if (res.status === 429) {
-            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+          } else if (res.status === 429 || res.status === 502 || res.status === 503) {
+            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+            if (res.status === 429 && model === "openrouter/free") {
+              markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+            }
           } else if (res.status === 401 || res.status === 402 || res.status === 403) {
             markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
           }
@@ -501,8 +563,13 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
         }
 
         const parsed = JSON.parse(rawText.trim());
-        const content = parsed.choices?.[0]?.message?.content;
-        if (!content) throw new Error(`OpenRouter(${model}): Empty content`);
+        const msgObj = parsed.choices?.[0]?.message || {};
+        const content = msgObj.content || msgObj.reasoning || "";
+        if (!content) {
+          runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+          throw new Error(`OpenRouter(${model}): Empty content`);
+        }
+
         const usedModel = parsed.model || model;
         return {
           result: extractJson(content),
@@ -511,7 +578,14 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
       } catch (err) {
         const msg = err?.name === "AbortError" ? `OpenRouter(${model}) Timeout` : err.message;
         errors.push(msg);
-        if (msg.includes("404") || msg.includes("502") || msg.includes("503") || msg.includes("Timeout")) {
+        if (
+          msg.includes("404") ||
+          msg.includes("429") ||
+          msg.includes("502") ||
+          msg.includes("503") ||
+          msg.includes("Empty content") ||
+          msg.includes("Timeout")
+        ) {
           break;
         }
       }
@@ -589,7 +663,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 1150,
+        max_tokens: 1800,
         messages: [
           {
             role: "user",
@@ -1011,6 +1085,7 @@ async function handleOpenRouterBackupChat({ apiKeys, messages, locationContext, 
               model,
               temperature: 0.3,
               max_tokens: 650,
+              reasoning: { enabled: false },
               messages: chatMessages
             })
           },
@@ -1022,7 +1097,8 @@ async function handleOpenRouterBackupChat({ apiKeys, messages, locationContext, 
         }
         if (!res.ok) continue;
         const data = await res.json();
-        const reply = data.choices?.[0]?.message?.content?.trim();
+        const msgObj = data.choices?.[0]?.message || {};
+        const reply = String(msgObj.content || msgObj.reasoning || "").trim();
         if (reply) {
           return reply
             .replace(/<think>[\s\S]*?<\/think>/gi, "")
@@ -1408,14 +1484,14 @@ module.exports = async (req, res) => {
       let visionOutput = null;
       let openRouterError = null;
 
-      // Bước 1: Gọi thẳng OpenRouter Free Vision (tự xoay vòng 4 model & nhiều key)
+      // Bước 1: Gọi thẳng OpenRouter Free Vision (tự động lấy model :free có hỗ trợ ảnh + xoay vòng)
       if (openRouterKeys.length) {
         try {
           visionOutput = await runOpenRouterPrimaryVision({
             apiKeys: openRouterKeys,
             prompt,
             imageBase64,
-            deadline: Math.min(deadline, Date.now() + 8300)
+            deadline: Math.min(deadline, Date.now() + 9200)
           });
         } catch (err) {
           openRouterError = err;
