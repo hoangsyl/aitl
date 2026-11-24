@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - Groq Vision Primary (qwen3.8-27b ~2s) + OpenRouter Free Backup + Auto-Verify
+ * AIvolution Team - Groq Vision Primary (qwen3.8-27b) + OpenRouter Free Backup + Auto-Verify
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -7,19 +7,17 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (GROQ VISION CHÍNH ~2s – OPENROUTER DỰ PHÒNG)
+// 1. CẤU HÌNH HỆ THỐNG (GROQ VISION CHÍNH – OPENROUTER FREE DỰ PHÒNG)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
+  // Chỉ giữ model Vision còn hoạt động trên Groq (đã bỏ Llama 4 bị 404)
   GROQ_VISION_MODELS: [
-    "qwen/qwen3.8-27b",
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct"
+    "qwen/qwen3.8-27b"
   ],
   OPENROUTER_VISION_MODELS: [
-    "meta-llama/llama-3.2-11b-vision-instruct:free",
-    "mistralai/mistral-small-3.1-24b-instruct:free",
     "google/gemma-3-27b-it:free",
+    "mistralai/mistral-small-3.1-24b-instruct:free",
     "openrouter/free",
     "qwen/qwen2.5-vl-32b-instruct:free",
     "qwen/qwen2.5-vl-72b-instruct:free"
@@ -29,10 +27,10 @@ const CONFIG = {
     "google/gemma-4-26b-a4b-it:free",
     "nvidia/nemotron-3.5-lightning:free"
   ],
-  TOTAL_SCAN_BUDGET_MS: 9500,
-  GROQ_VISION_TIMEOUT_MS: 3800,
-  OPENROUTER_BACKUP_TIMEOUT_MS: 5200,
-  HEDGE_DELAY_MS: 2600,
+  TOTAL_SCAN_BUDGET_MS: 11500,
+  GROQ_VISION_TIMEOUT_MS: 6200,
+  OPENROUTER_BACKUP_TIMEOUT_MS: 4800,
+  HEDGE_DELAY_MS: 2200,
   GROQ_MODELS_TIMEOUT_MS: 1200,
   SERPER_TIMEOUT_MS: 750,
   CHAT_TIMEOUT_MS: 4500,
@@ -53,13 +51,13 @@ const runtimeState = {
   cachedGroqModelsAt: 0,
   badGroqVisionModels: new Set(),
   badOpenRouterModels: new Set(),
-  modelCooldownUntil: new Map(), // Cách ly model bị 429/502/503 hoặc Empty content trong 60s
+  modelCooldownUntil: new Map(),
   keyCooldownUntil: new Map(),
-  rrIndex: Object.create(null),  // Round-robin chia tải đều tối đa 30 key/nguồn
-  inFlight: new Map(),           // Single-flight gộp request trùng
-  scanCache: new Map(),          // Cache ảnh 15 phút
-  serperCache: new Map(),        // Cache Google/giá 60 phút
-  ttsCache: new Map()            // Cache giọng đọc 30 phút
+  rrIndex: Object.create(null),
+  inFlight: new Map(),
+  scanCache: new Map(),
+  serperCache: new Map(),
+  ttsCache: new Map()
 };
 
 // ==========================================
@@ -407,7 +405,7 @@ Luật:
 }
 
 // ==========================================
-// 5. TẦNG 1 (QUÉT ẢNH CHÍNH SIÊU TỐC ~2s): GROQ LPU (QWEN 3.8 27B)
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): GROQ LPU (QWEN 3.8 27B)
 // ==========================================
 async function fetchWorkingGroqModels(apiKey, timeoutMs = CONFIG.GROQ_MODELS_TIMEOUT_MS) {
   const now = Date.now();
@@ -448,7 +446,7 @@ async function callGroqVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
   const payload = {
     model,
     temperature: 0.1,
-    max_tokens: isQwen38 ? 850 : 1100, // Dưới trần 1.000 OTPM của Qwen 3.8 trên Groq Free
+    max_completion_tokens: isQwen38 ? 850 : 1100,
     messages: [
       {
         role: "user",
@@ -460,7 +458,6 @@ async function callGroqVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
     ]
   };
 
-  // Tắt suy luận nháp trên Qwen 3.8 để trả JSON tức thì (~1.5–2.5s)
   if (isQwen38) {
     payload.reasoning_effort = "none";
   }
@@ -513,11 +510,11 @@ async function runGroqPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) 
 
   for (const model of orderedModels) {
     const remainingForModel = deadline - Date.now();
-    if (remainingForModel < 1100) break;
+    if (remainingForModel < 1800) break;
 
     for (const apiKey of apiKeys.slice(0, 3)) {
       const remaining = deadline - Date.now();
-      if (remaining < 1100) break;
+      if (remaining < 1800) break;
 
       try {
         const result = await callGroqVision({
@@ -536,18 +533,20 @@ async function runGroqPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) 
 
         if (err.status === 400 || err.status === 404) {
           runtimeState.badGroqVisionModels.add(model);
-          break; // Model không hỗ trợ ảnh hoặc đã gỡ -> nhảy ngay model tiếp theo
+          break;
         }
         if (err.status === 429) {
           markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-          continue; // Đổi sang GROQ_API_KEY tiếp theo
+          continue;
         }
         if (err.status === 401 || err.status === 403) {
           markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
           continue;
         }
         if (err.status === 502 || err.status === 503 || msg.includes("Timeout")) {
-          runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+          if (availableModels.length > 1) {
+            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+          }
           break;
         }
       }
@@ -964,11 +963,21 @@ async function handleGroqChat({ apiKeys, messages, locationContext, lastScan }) 
 
     const sortedModels = [
       ...models.filter((m) => /llama-3\.3-70b|gpt-oss-120b|qwen3\.8|qwen-2\.5-32b/i.test(m)),
-      ...models.filter((m) => /llama-3\.1|gpt-oss-20b|llama-4|qwen/i.test(m))
+      ...models.filter((m) => /llama-3\.1|gpt-oss-20b|qwen/i.test(m))
     ];
 
     for (const model of [...new Set(sortedModels)].slice(0, 2)) {
       try {
+        const chatPayload = {
+          model,
+          temperature: 0.3,
+          max_completion_tokens: 650,
+          messages: chatMessages
+        };
+        if (/qwen3/i.test(model)) {
+          chatPayload.reasoning_effort = "none";
+        }
+
         const res = await fetchWithTimeout(
           "https://api.groq.com/openai/v1/chat/completions",
           {
@@ -977,12 +986,7 @@ async function handleGroqChat({ apiKeys, messages, locationContext, lastScan }) 
               "Content-Type": "application/json",
               Authorization: `Bearer ${apiKey}`
             },
-            body: JSON.stringify({
-              model,
-              temperature: 0.3,
-              max_tokens: 650,
-              messages: chatMessages
-            })
+            body: JSON.stringify(chatPayload)
           },
           CONFIG.CHAT_TIMEOUT_MS
         );
@@ -1357,7 +1361,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 10. ENTRY POINT SERVERLESS HANDLER (GROQ ~2s CHÍNH -> OPENROUTER BACKUP)
+// 10. ENTRY POINT SERVERLESS HANDLER (GROQ CHÍNH -> OPENROUTER BACKUP)
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1419,7 +1423,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. QUÉT ẢNH (GROQ QWEN 3.8 ~2s CHÍNH -> OPENROUTER FREE DỰ PHÒNG -> GOOGLE VERIFY) ---
+    // --- 3. QUÉT ẢNH (GROQ QWEN 3.8 CHÍNH -> OPENROUTER FREE DỰ PHÒNG -> GOOGLE VERIFY) ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1439,9 +1443,9 @@ module.exports = async (req, res) => {
       let visionOutput = null;
       let groqError = null;
 
-      // Bước 1: Gọi thẳng Groq Vision (qwen/qwen3.8-27b siêu tốc ~2s)
+      // Bước 1: Gọi Groq Vision (qwen/qwen3.8-27b)
       if (groqKeys.length) {
-        const groqBudgetMs = openRouterKeys.length ? 4500 : 8500;
+        const groqBudgetMs = openRouterKeys.length ? 6500 : 10000;
         try {
           visionOutput = await runGroqPrimaryVision({
             apiKeys: groqKeys,
