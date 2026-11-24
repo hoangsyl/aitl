@@ -405,31 +405,6 @@ Luật:
 5. YÊU CẦU CHI TIẾT: Phân tích sâu, đầy đủ thông tin, cụ thể theo ảnh (2–3 câu cho mỗi mục chính). CHỈ TRẢ JSON THUẦN:
 {"khong_nhan_dien_duoc":false,"chu_doc_duoc_tren_anh":"","loai_doi_tuong":"Trường học & Tổ chức|Thương hiệu|Di tích|Nhà hàng & Quán ăn|Shop & Workshop|Hán Nôm|Thức ăn & Đồ uống|Sản phẩm|Vật thể","la_dia_diem":false,"ten_dia_diem":"","dia_chi":"","nien_dai_hoac_gia":"","cau_chuyen_lich_su":"2-3 câu đầy đủ về bản chất, nguồn gốc/ý nghĩa văn hóa và công dụng thực tế","giai_thoai_dac_biet":"2-3 câu mô tả sắc nét màu sắc, hoa văn, bố cục, chất liệu, topping hoặc điểm nhấn nhìn thấy trong ảnh","thong_tin_san_pham":{"hien_thi":true,"calo_uoc_tinh":"","tot_cho_suc_khoe":"1-2 câu đánh giá dinh dưỡng/độ an toàn và lưu ý sử dụng (hoặc Không áp dụng)","chi_tiet_san_pham":"2 câu liệt kê rõ bảng cộng định lượng calo từng thành phần (nếu là món ăn) hoặc chất liệu, thông số, dung tích nổi bật","noi_mua_goi_y":"Địa điểm/khu vực hoặc hệ thống cửa hàng cụ thể tại Đà Nẵng – Hội An","tu_khoa_mua_hang":""},"han_viet":{"co_han_viet":false,"chu_goc":"","phien_am":"","phan_tich_tung_tu":[],"y_nghia_tong_the":""},"danh_gia_ban_dia":{"tom_tat":"1-2 câu nhận xét khách quan về giá trị sử dụng, độ phổ biến hoặc hương vị","review_mau":["Ưu điểm cụ thể thực tế","Lưu ý hữu ích khi mua hoặc thưởng thức"]}}`;
 }
-{
-  "khong_nhan_dien_duoc": false,
-  "chu_doc_duoc_tren_anh": "Chữ/logo/dung tích đọc được",
-  "loai_doi_tuong": "Trường học & Tổ chức | Thương hiệu | Di tích | Nhà hàng & Quán ăn | Shop & Workshop | Hán Nôm | Thức ăn & Đồ uống | Sản phẩm | Vật thể",
-  "la_dia_diem": false,
-  "ten_dia_diem": "Tên gọi cụ thể của vật thể, sản phẩm, món ăn, trường học hoặc địa điểm (CẤM ghi 'Chưa xác định')",
-  "dia_chi": "Địa chỉ thật nếu là địa điểm và chắc 100%, không chắc ghi 'Chưa xác định rõ từ ảnh'; đồ vật ghi 'Không áp dụng'",
-  "nien_dai_hoac_gia": "Khoảng giá bán lẻ VNĐ phổ biến tại Việt Nam (VD: '30.000 - 60.000 VNĐ') hoặc năm thành lập thật nếu là trường/di tích",
-  "cau_chuyen_lich_su": "2-3 câu đầy đủ và chính xác về bản chất, nguồn gốc/ý nghĩa văn hóa và công dụng thực tế.",
-  "giai_thoai_dac_biet": "2-3 câu mô tả sắc nét các chi tiết quan sát trực tiếp trong ảnh (màu sắc, hoa văn, bố cục, chất liệu, điểm nhấn nổi bật).",
-  "thong_tin_san_pham": {
-    "hien_thi": true,
-    "calo_uoc_tinh": "Số kcal chính xác | 'Chưa đủ dữ liệu trên ảnh' | 'Không áp dụng'",
-    "tot_cho_suc_khoe": "1-2 câu đánh giá dinh dưỡng/độ an toàn hoặc lưu ý sử dụng (ghi 'Không áp dụng' với logo trường/di tích).",
-    "chi_tiet_san_pham": "1-2 câu nêu rõ bảng cộng định lượng calo (nếu là món ăn) hoặc chất liệu, kích thước, thành phần nổi bật.",
-    "noi_mua_goi_y": "Khu vực hoặc loại cửa hàng/siêu thị phổ biến tại Việt Nam.",
-    "tu_khoa_mua_hang": "Từ khóa Google Maps"
-  },
-  "han_viet": { "co_han_viet": false, "chu_goc": "", "phien_am": "", "phan_tich_tung_tu": [], "y_nghia_tong_the": "" },
-  "danh_gia_ban_dia": {
-    "tom_tat": "1-2 câu nhận xét khách quan về giá trị sử dụng, độ phổ biến hoặc trải nghiệm thực tế.",
-    "review_mau": ["Ưu điểm cụ thể thực tế", "Lưu ý hữu ích khi mua hoặc sử dụng"]
-  }
-}`;
-}
 
 // ==========================================
 // 5. TẦNG 1 (QUÉT ẢNH CHÍNH): OPENROUTER FREE VISION + TỰ TÌM MODEL :FREE HỖ TRỢ ẢNH
@@ -660,7 +635,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 1800,
+        max_tokens: 1300,
         messages: [
           {
             role: "user",
