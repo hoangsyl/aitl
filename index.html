@@ -37,7 +37,7 @@
     })();
   </script>
 
-  <link rel="stylesheet" href="style.css?v=33" />
+  <link rel="stylesheet" href="style.css?v=34" />
 </head>
 <body>
   <div class="app-shell">
@@ -112,74 +112,77 @@
         </div>
       </section>
 
-      <!-- Icon News & Food & Drinks (Dùng chung class .news-tile-btn để thẳng hàng tuyệt đối) -->
-      <section class="home-app-dock" aria-label="Tiện ích khám phá nhanh">
-        <button
-          type="button"
-          id="btnOpenNewsHub"
-          class="news-tile-btn"
-          aria-haspopup="dialog"
-          aria-controls="exploreHubModal"
-          aria-label="Mở tab News, Food & Drinks và Check-in Đà Nẵng – Hội An"
-        >
-          <span class="news-tile-icon" aria-hidden="true">
-            <svg viewBox="0 0 64 64" width="58" height="58" fill="none">
-              <rect x="2" y="2" width="60" height="60" rx="15" fill="#F4F5F7" stroke="#CBD5E1" stroke-width="2" />
-              <text x="32" y="21" text-anchor="middle" fill="#111318" font-family="Georgia, 'Times New Roman', serif" font-weight="800" font-size="14">NEWS</text>
-              <rect x="8" y="25" width="48" height="2.4" rx="1.2" fill="#8C939D" />
-              <rect x="8" y="29" width="48" height="1.6" rx="0.8" fill="#B0B7C0" />
-              <rect x="8" y="34" width="17" height="15" rx="2" fill="#9AA1AC" />
-              <rect x="29" y="34" width="27" height="2.2" rx="1" fill="#7D8590" />
-              <rect x="29" y="38.5" width="24" height="2" rx="1" fill="#9AA1AC" />
-              <rect x="29" y="43" width="27" height="2" rx="1" fill="#9AA1AC" />
-              <rect x="29" y="47.5" width="18" height="2" rx="1" fill="#9AA1AC" />
-              <rect x="8" y="52.5" width="48" height="2" rx="1" fill="#8C939D" />
-              <rect x="8" y="56.5" width="36" height="2" rx="1" fill="#B0B7C0" />
-            </svg>
-            <span class="news-tile-dot"></span>
-          </span>
-          <span class="news-tile-label">News</span>
-        </button>
-
-        <button
-          type="button"
-          id="fd-open-btn"
-          class="news-tile-btn"
-          aria-haspopup="dialog"
-          aria-controls="fd-modal"
-          aria-label="Mở Food and Drinks - Tự động quét nhà hàng, quán ăn và minimart gần bạn"
-        >
-          <span class="news-tile-icon" aria-hidden="true">
-            <span class="fd-tile-inner">
-              <svg
-                width="36"
-                height="36"
-                viewBox="0 0 48 48"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.1"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <path d="M21 10L37 7.5V37.5H28" />
-                <path d="M21 10V23.5" />
-                <line x1="21" y1="10" x2="37" y2="10" />
-                <path d="M26.5 14L33.5 21" />
-                <path d="M25 15.5L26.5 17M27.5 13L29 14.5" />
-                <path d="M32.5 14L26.5 20" />
-                <circle cx="33.5" cy="13.5" r="1.7" />
-                <line x1="28" y1="26" x2="34" y2="26" />
-                <line x1="29.5" y1="29.5" x2="34" y2="29.5" />
-                <line x1="30.5" y1="33" x2="34" y2="33" />
-                <circle cx="20.5" cy="23.5" r="1.6" />
-                <path d="M11 35C11 29.2 15.2 25.5 20.5 25.5C25.8 25.5 30 29.2 30 35" />
-                <rect x="9.5" y="35" width="22" height="2.4" rx="1.2" />
+      <!-- Các tiện ích khác (News & Food & Drinks) -->
+      <section class="home-utils-section" aria-labelledby="otherUtilsTitle">
+        <h2 id="otherUtilsTitle" class="home-utils-title">Các tiện ích khác</h2>
+        <div class="home-app-dock">
+          <button
+            type="button"
+            id="btnOpenNewsHub"
+            class="news-tile-btn"
+            aria-haspopup="dialog"
+            aria-controls="exploreHubModal"
+            aria-label="Mở tab News, Food & Drinks và Check-in Đà Nẵng – Hội An"
+          >
+            <span class="news-tile-icon" aria-hidden="true">
+              <svg viewBox="0 0 64 64" width="58" height="58" fill="none">
+                <rect x="2" y="2" width="60" height="60" rx="15" fill="#F4F5F7" stroke="#CBD5E1" stroke-width="2" />
+                <text x="32" y="21" text-anchor="middle" fill="#111318" font-family="Georgia, 'Times New Roman', serif" font-weight="800" font-size="14">NEWS</text>
+                <rect x="8" y="25" width="48" height="2.4" rx="1.2" fill="#8C939D" />
+                <rect x="8" y="29" width="48" height="1.6" rx="0.8" fill="#B0B7C0" />
+                <rect x="8" y="34" width="17" height="15" rx="2" fill="#9AA1AC" />
+                <rect x="29" y="34" width="27" height="2.2" rx="1" fill="#7D8590" />
+                <rect x="29" y="38.5" width="24" height="2" rx="1" fill="#9AA1AC" />
+                <rect x="29" y="43" width="27" height="2" rx="1" fill="#9AA1AC" />
+                <rect x="29" y="47.5" width="18" height="2" rx="1" fill="#9AA1AC" />
+                <rect x="8" y="52.5" width="48" height="2" rx="1" fill="#8C939D" />
+                <rect x="8" y="56.5" width="36" height="2" rx="1" fill="#B0B7C0" />
               </svg>
+              <span class="news-tile-dot"></span>
             </span>
-            <span class="news-tile-dot"></span>
-          </span>
-          <span class="news-tile-label">Food &amp; Drinks</span>
-        </button>
+            <span class="news-tile-label">News</span>
+          </button>
+
+          <button
+            type="button"
+            id="fd-open-btn"
+            class="news-tile-btn"
+            aria-haspopup="dialog"
+            aria-controls="fd-modal"
+            aria-label="Mở Food and Drinks - Tự động quét nhà hàng, quán ăn và minimart gần bạn"
+          >
+            <span class="news-tile-icon" aria-hidden="true">
+              <span class="fd-tile-inner">
+                <svg
+                  width="36"
+                  height="36"
+                  viewBox="0 0 48 48"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2.1"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M21 10L37 7.5V37.5H28" />
+                  <path d="M21 10V23.5" />
+                  <line x1="21" y1="10" x2="37" y2="10" />
+                  <path d="M26.5 14L33.5 21" />
+                  <path d="M25 15.5L26.5 17M27.5 13L29 14.5" />
+                  <path d="M32.5 14L26.5 20" />
+                  <circle cx="33.5" cy="13.5" r="1.7" />
+                  <line x1="28" y1="26" x2="34" y2="26" />
+                  <line x1="29.5" y1="29.5" x2="34" y2="29.5" />
+                  <line x1="30.5" y1="33" x2="34" y2="33" />
+                  <circle cx="20.5" cy="23.5" r="1.6" />
+                  <path d="M11 35C11 29.2 15.2 25.5 20.5 25.5C25.8 25.5 30 29.2 30 35" />
+                  <rect x="9.5" y="35" width="22" height="2.4" rx="1.2" />
+                </svg>
+              </span>
+              <span class="news-tile-dot"></span>
+            </span>
+            <span class="news-tile-label">Food &amp; Drinks</span>
+          </button>
+        </div>
       </section>
     </main>
 
