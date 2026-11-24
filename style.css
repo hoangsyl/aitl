@@ -3256,3 +3256,16 @@ input:focus-visible {
     animation: none !important;
   }
 }
+/* Tiêu đề "Các tiện ích khác" & khoảng cách đẩy 2 icon xuống */
+.home-utils-section {
+  margin-top: 22px;
+  margin-bottom: 18px;
+}
+
+.home-utils-title {
+  margin: 0 0 14px 2px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+  text-wrap: balance;
+}
