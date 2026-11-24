@@ -38,6 +38,431 @@
   </script>
 
   <link rel="stylesheet" href="style.css?v=32" />
+
+  <!-- CSS cho nút & Modal Food & Drinks GPS -->
+  <style>
+    .home-app-dock {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-start;
+      gap: 18px;
+    }
+
+    .fd-trigger {
+      display: inline-flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      background: transparent;
+      border: 0;
+      padding: 0;
+      cursor: pointer;
+      color: inherit;
+      font-family: inherit;
+    }
+
+    .fd-trigger:focus-visible,
+    .fd-icon-btn:focus-visible,
+    .fd-tab:focus-visible,
+    .fd-btn-ai:focus-visible,
+    .fd-btn-maps:focus-visible,
+    .fd-action-btn:focus-visible {
+      outline: 2px solid #a3e635;
+      outline-offset: 2px;
+    }
+
+    .fd-trigger-box {
+      position: relative;
+      width: 60px;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 16px;
+      background: #0b0b0d;
+      border: 1px solid #27272a;
+      color: #ffffff;
+      transition: transform 150ms ease-out;
+    }
+
+    .fd-trigger:active .fd-trigger-box {
+      transform: scale(0.95);
+    }
+
+    .fd-trigger-dot {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      width: 11px;
+      height: 11px;
+      border-radius: 999px;
+      background: #a3e635;
+      border: 2px solid #0b0b0d;
+    }
+
+    .fd-trigger-label {
+      font-size: 12px;
+      font-weight: 500;
+      line-height: 1.2;
+    }
+
+    /* Modal */
+    .fd-modal[hidden] {
+      display: none;
+    }
+
+    .fd-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.72);
+      padding: 8px 8px max(12px, env(safe-area-inset-bottom));
+    }
+
+    @media (min-width: 640px) {
+      .fd-modal {
+        align-items: center;
+      }
+    }
+
+    .fd-panel {
+      width: 100%;
+      max-width: 440px;
+      max-height: 88dvh;
+      display: flex;
+      flex-direction: column;
+      background: #0c0c0e;
+      border: 1px solid #27272a;
+      border-radius: 24px;
+      color: #f4f4f5;
+      overflow: hidden;
+      outline: none;
+      opacity: 0;
+      transform: translateY(12px);
+      transition: transform 180ms ease-out, opacity 180ms ease-out;
+    }
+
+    [data-theme="light"] .fd-panel {
+      background: #ffffff;
+      border-color: #e4e4e7;
+      color: #18181b;
+    }
+
+    .fd-modal.is-open .fd-panel {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .fd-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid #1f1f23;
+    }
+
+    [data-theme="light"] .fd-header {
+      border-bottom-color: #e4e4e7;
+    }
+
+    .fd-header-text {
+      min-width: 0;
+    }
+
+    .fd-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      text-wrap: balance;
+    }
+
+    .fd-status {
+      margin: 3px 0 0;
+      font-size: 12px;
+      color: #a1a1aa;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    [data-theme="light"] .fd-status {
+      color: #52525b;
+    }
+
+    .fd-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .fd-icon-btn {
+      width: 36px;
+      height: 36px;
+      border-radius: 999px;
+      border: 1px solid #27272a;
+      background: #18181b;
+      color: #e4e4e7;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: transform 150ms ease-out;
+    }
+
+    [data-theme="light"] .fd-icon-btn {
+      border-color: #d4d4d8;
+      background: #f4f4f5;
+      color: #18181b;
+    }
+
+    .fd-icon-btn:active {
+      transform: scale(0.94);
+    }
+
+    .fd-tabs {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 10px 16px;
+      scrollbar-width: none;
+    }
+
+    .fd-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .fd-tab {
+      flex-shrink: 0;
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1px solid #27272a;
+      background: #18181b;
+      color: #d4d4d8;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    [data-theme="light"] .fd-tab {
+      border-color: #d4d4d8;
+      background: #f4f4f5;
+      color: #3f3f46;
+    }
+
+    .fd-tab[aria-selected="true"] {
+      background: #a3e635;
+      border-color: #a3e635;
+      color: #09090b;
+      font-weight: 600;
+    }
+
+    .fd-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 4px 16px 16px;
+    }
+
+    .fd-list {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .fd-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 13px 14px;
+      border-radius: 16px;
+      background: #141417;
+      border: 1px solid #232329;
+    }
+
+    [data-theme="light"] .fd-card {
+      background: #fafafa;
+      border-color: #e4e4e7;
+    }
+
+    .fd-card-info {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .fd-card-name {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .fd-card-meta {
+      margin: 5px 0 0;
+      font-size: 12px;
+      color: #a1a1aa;
+      font-variant-numeric: tabular-nums;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 5px;
+    }
+
+    [data-theme="light"] .fd-card-meta {
+      color: #52525b;
+    }
+
+    .fd-rating {
+      color: #a3e635;
+      font-weight: 600;
+    }
+
+    [data-theme="light"] .fd-rating {
+      color: #4d7c0f;
+    }
+
+    .fd-card-addr {
+      margin: 4px 0 0;
+      font-size: 11px;
+      color: #71717a;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .fd-card-actions {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+
+    .fd-btn-ai,
+    .fd-btn-maps {
+      padding: 7px 11px;
+      border-radius: 10px;
+      font-size: 12px;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      font-family: inherit;
+      transition: transform 150ms ease-out;
+    }
+
+    .fd-btn-ai {
+      background: #09090b;
+      border: 1px solid #3f3f46;
+      color: #f4f4f5;
+    }
+
+    [data-theme="light"] .fd-btn-ai {
+      background: #ffffff;
+      border-color: #d4d4d8;
+      color: #18181b;
+    }
+
+    .fd-btn-maps {
+      background: #a3e635;
+      border: 1px solid #a3e635;
+      color: #09090b;
+    }
+
+    .fd-btn-ai:active,
+    .fd-btn-maps:active {
+      transform: scale(0.95);
+    }
+
+    .fd-skeleton {
+      padding: 14px;
+      border-radius: 16px;
+      background: #141417;
+      border: 1px solid #232329;
+    }
+
+    [data-theme="light"] .fd-skeleton {
+      background: #f4f4f5;
+      border-color: #e4e4e7;
+    }
+
+    .fd-skel-line {
+      height: 12px;
+      border-radius: 6px;
+      background: #27272a;
+    }
+
+    [data-theme="light"] .fd-skel-line {
+      background: #d4d4d8;
+    }
+
+    .fd-skel-line.w-70 { width: 70%; height: 14px; }
+    .fd-skel-line.w-50 { width: 50%; margin-top: 8px; }
+
+    .fd-state-box {
+      padding: 20px 16px;
+      border-radius: 16px;
+      background: #141417;
+      border: 1px solid #27272a;
+      text-align: center;
+    }
+
+    [data-theme="light"] .fd-state-box {
+      background: #fafafa;
+      border-color: #e4e4e7;
+    }
+
+    .fd-state-box.is-error {
+      border-color: #7f1d1d;
+      background: #1c1012;
+      color: #fecaca;
+    }
+
+    [data-theme="light"] .fd-state-box.is-error {
+      border-color: #fca5a5;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+
+    .fd-state-text {
+      margin: 0;
+      font-size: 13px;
+      text-wrap: pretty;
+    }
+
+    .fd-action-btn {
+      margin-top: 12px;
+      padding: 8px 16px;
+      border-radius: 10px;
+      border: 0;
+      background: #a3e635;
+      color: #09090b;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .fd-trigger-box,
+      .fd-panel,
+      .fd-icon-btn,
+      .fd-btn-ai,
+      .fd-btn-maps {
+        transition: none;
+      }
+    }
+  </style>
 </head>
 <body>
   <div class="app-shell">
@@ -112,7 +537,7 @@
         </div>
       </section>
 
-      <!-- Icon News & Xu hướng (Vị trí khoanh đỏ bên trái) -->
+      <!-- Icon News & Food & Drinks GPS -->
       <section class="home-app-dock" aria-label="Tiện ích khám phá nhanh">
         <button
           type="button"
@@ -139,6 +564,44 @@
             <span class="news-tile-dot"></span>
           </span>
           <span class="news-tile-label">News</span>
+        </button>
+
+        <button
+          type="button"
+          id="fd-open-btn"
+          class="fd-trigger"
+          aria-haspopup="dialog"
+          aria-controls="fd-modal"
+          aria-label="Mở Food and Drinks - Tự động quét nhà hàng, quán ăn và minimart gần bạn"
+        >
+          <span class="fd-trigger-box" aria-hidden="true">
+            <span class="fd-trigger-dot"></span>
+            <svg
+              width="36"
+              height="36"
+              viewBox="0 0 48 48"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M20 11L36 8.5V37H27" />
+              <path d="M20 11V24.5" />
+              <line x1="20" y1="11" x2="36" y2="11" />
+              <path d="M25.5 14.5L32.5 21.5" />
+              <path d="M24 16L25.5 17.5M26.5 13.5L28 15" />
+              <path d="M31.5 14.5L25.5 20.5" />
+              <circle cx="32.5" cy="14" r="1.7" />
+              <line x1="27" y1="26" x2="33" y2="26" />
+              <line x1="28.5" y1="29.5" x2="33" y2="29.5" />
+              <line x1="29.5" y1="33" x2="33" y2="33" />
+              <circle cx="20" cy="24.5" r="1.5" />
+              <path d="M11 35C11 29.5 15 26 20 26C25 26 29 29.5 29 35" />
+              <rect x="9.5" y="35" width="21" height="2.2" rx="1.1" />
+            </svg>
+          </span>
+          <span class="fd-trigger-label">Food &amp; Drinks</span>
         </button>
       </section>
     </main>
@@ -364,7 +827,319 @@
     </div>
   </div>
 
+  <!-- ==================== 8. MODAL FOOD & DRINKS QUANH BẠN (GPS GOOGLE MAPS) ==================== -->
+  <div
+    id="fd-modal"
+    class="fd-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="fd-modal-title"
+    hidden
+  >
+    <div id="fd-panel" class="fd-panel" tabindex="-1">
+      <header class="fd-header">
+        <div class="fd-header-text">
+          <h2 id="fd-modal-title" class="fd-title">Food &amp; Drinks quanh bạn</h2>
+          <p id="fd-status" class="fd-status" aria-live="polite">
+            Ưu tiên đánh giá cao nhất • Bán kính 1km
+          </p>
+        </div>
+        <div class="fd-header-actions">
+          <button type="button" id="fd-refresh-btn" class="fd-icon-btn" aria-label="Quét lại vị trí">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8" />
+              <path d="M21 3v5h-5" />
+            </svg>
+          </button>
+          <button type="button" id="fd-close-btn" class="fd-icon-btn" aria-label="Đóng Food and Drinks">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="fd-tabs" role="tablist" aria-label="Lọc danh mục cửa hàng">
+        <button type="button" class="fd-tab" role="tab" aria-selected="true" data-cat="all">Tất cả</button>
+        <button type="button" class="fd-tab" role="tab" aria-selected="false" data-cat="food">Nhà hàng &amp; Quán ăn</button>
+        <button type="button" class="fd-tab" role="tab" aria-selected="false" data-cat="minimart">Minimart</button>
+        <button type="button" class="fd-tab" role="tab" aria-selected="false" data-cat="cafe">Cà phê</button>
+      </div>
+
+      <div id="fd-body" class="fd-body" aria-busy="false">
+        <ul id="fd-list" class="fd-list"></ul>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js?v=33"></script>
+
+  <!-- Script cho chức năng Food & Drinks GPS -->
+  <script>
+    (function () {
+      const CACHE_PREFIX = "aivolution_fd_v1";
+      const CACHE_TTL_MS = 15 * 60 * 1000;
+      const MOVE_THRESHOLD_M = 250;
+
+      const openBtn = document.getElementById("fd-open-btn");
+      const modal = document.getElementById("fd-modal");
+      const panel = document.getElementById("fd-panel");
+      const closeBtn = document.getElementById("fd-close-btn");
+      const refreshBtn = document.getElementById("fd-refresh-btn");
+      const statusEl = document.getElementById("fd-status");
+      const bodyEl = document.getElementById("fd-body");
+      const listEl = document.getElementById("fd-list");
+      const tabs = document.querySelectorAll(".fd-tab");
+
+      let currentCategory = "all";
+      let currentRadius = 1000;
+      let lastPlaces = [];
+
+      function escapeHtml(str) {
+        return String(str || "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function askAIForPlace(place) {
+        const prompt =
+          'Review nhanh "' +
+          place.name +
+          '" (' +
+          place.type +
+          ", " +
+          place.rating.toFixed(1) +
+          " sao" +
+          (place.address ? ", địa chỉ: " + place.address : "") +
+          "). Quán này có món gì ngon đáng thử và tầm giá khoảng bao nhiêu?";
+
+        closeModal();
+
+        const chatNavBtn =
+          document.getElementById("btnQuickChat") ||
+          document.querySelector('[data-nav="chat"]');
+        const chatInput = document.getElementById("chatInput");
+        const chatForm = document.getElementById("chatForm");
+
+        if (chatNavBtn) chatNavBtn.click();
+        if (chatInput && chatForm) {
+          chatInput.value = prompt;
+          chatInput.focus();
+          if (typeof chatForm.requestSubmit === "function") {
+            chatForm.requestSubmit();
+          } else {
+            chatForm.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+          }
+        }
+      }
+
+      function renderSkeletons() {
+        bodyEl.setAttribute("aria-busy", "true");
+        listEl.innerHTML = Array.from({ length: 5 })
+          .map(
+            () =>
+              '<li class="fd-skeleton"><div class="fd-skel-line w-70"></div><div class="fd-skel-line w-50"></div></li>'
+          )
+          .join("");
+      }
+
+      function renderPlaces(places) {
+        lastPlaces = places;
+        bodyEl.setAttribute("aria-busy", "false");
+
+        if (!places.length) {
+          const nextRadius = currentRadius < 2000 ? 2000 : 3000;
+          listEl.innerHTML =
+            '<li class="fd-state-box">' +
+            '<p class="fd-state-text">Không tìm thấy địa điểm từ 4.0★ trở lên trong bán kính ' +
+            currentRadius / 1000 +
+            "km.</p>" +
+            (currentRadius < 3000
+              ? '<button type="button" id="fd-expand-btn" class="fd-action-btn">Mở rộng quét lên ' +
+                nextRadius / 1000 +
+                "km</button>"
+              : "") +
+            "</li>";
+          const expandBtn = document.getElementById("fd-expand-btn");
+          if (expandBtn) {
+            expandBtn.addEventListener("click", function () {
+              currentRadius = nextRadius;
+              scanNearby(true);
+            });
+          }
+          return;
+        }
+
+        listEl.innerHTML = places
+          .map(function (p, idx) {
+            const distText =
+              p.distance < 1000 ? p.distance + "m" : (p.distance / 1000).toFixed(1) + "km";
+            return (
+              '<li class="fd-card">' +
+              '<div class="fd-card-info">' +
+              '<h3 class="fd-card-name">' + escapeHtml(p.name) + "</h3>" +
+              '<p class="fd-card-meta">' +
+              '<span class="fd-rating">★ ' + p.rating.toFixed(1) + "</span>" +
+              "<span>(" + p.reviews + ")</span>" +
+              '<span aria-hidden="true">•</span>' +
+              "<span>" + distText + "</span>" +
+              '<span aria-hidden="true">•</span>' +
+              "<span>" + escapeHtml(p.type) + "</span>" +
+              "</p>" +
+              (p.address ? '<p class="fd-card-addr">' + escapeHtml(p.address) + "</p>" : "") +
+              "</div>" +
+              '<div class="fd-card-actions">' +
+              '<button type="button" class="fd-btn-ai" data-idx="' + idx + '" aria-label="Hỏi AI về ' + escapeHtml(p.name) + '">AI</button>' +
+              '<a class="fd-btn-maps" href="' + escapeHtml(p.mapsUrl) + '" target="_blank" rel="noopener noreferrer" aria-label="Mở Google Maps chỉ đường tới ' + escapeHtml(p.name) + '">Maps</a>' +
+              "</div>" +
+              "</li>"
+            );
+          })
+          .join("");
+      }
+
+      function renderError(message) {
+        bodyEl.setAttribute("aria-busy", "false");
+        statusEl.textContent = "Không thể quét vị trí";
+        listEl.innerHTML =
+          '<li class="fd-state-box is-error">' +
+          '<p class="fd-state-text">' + escapeHtml(message) + "</p>" +
+          '<button type="button" id="fd-retry-btn" class="fd-action-btn">Thử quét lại</button>' +
+          "</li>";
+        const retryBtn = document.getElementById("fd-retry-btn");
+        if (retryBtn) {
+          retryBtn.addEventListener("click", function () {
+            scanNearby(true);
+          });
+        }
+      }
+
+      function getGPS() {
+        return new Promise(function (resolve, reject) {
+          if (!navigator.geolocation) {
+            return reject(new Error("Trình duyệt của bạn không hỗ trợ định vị GPS."));
+          }
+          navigator.geolocation.getCurrentPosition(
+            function (pos) {
+              resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+            },
+            function (err) {
+              if (err.code === 1) {
+                reject(new Error("Bạn chưa cấp quyền GPS. Hãy bật vị trí cho trình duyệt rồi thử lại."));
+              } else {
+                reject(new Error("Không lấy được tín hiệu GPS. Vui lòng thử lại."));
+              }
+            },
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+          );
+        });
+      }
+
+      async function scanNearby(forceRefresh) {
+        statusEl.textContent = "Đang quét GPS trong " + currentRadius / 1000 + "km...";
+        renderSkeletons();
+
+        try {
+          const coords = await getGPS();
+          const cacheKey = CACHE_PREFIX + "_" + currentCategory + "_" + currentRadius;
+          const cached = JSON.parse(localStorage.getItem(cacheKey) || "null");
+
+          const movedFar =
+            !cached ||
+            Math.hypot(coords.lat - cached.lat, coords.lng - cached.lng) * 111000 > MOVE_THRESHOLD_M;
+
+          if (!forceRefresh && cached && !movedFar && Date.now() - cached.ts < CACHE_TTL_MS) {
+            statusEl.textContent =
+              "Top " + cached.places.length + " nơi (★ cao → thấp) • " + currentRadius / 1000 + "km";
+            renderPlaces(cached.places);
+            return;
+          }
+
+          const url =
+            "/api/nearby-places?lat=" +
+            coords.lat +
+            "&lng=" +
+            coords.lng +
+            "&radius=" +
+            currentRadius +
+            "&category=" +
+            currentCategory;
+          const res = await fetch(url);
+          const data = await res.json();
+
+          if (!res.ok) throw new Error(data.error || "Lỗi tải dữ liệu địa điểm.");
+
+          localStorage.setItem(
+            cacheKey,
+            JSON.stringify({ lat: coords.lat, lng: coords.lng, ts: Date.now(), places: data.places })
+          );
+
+          statusEl.textContent =
+            "Top " + data.places.length + " nơi (★ cao → thấp) • " + currentRadius / 1000 + "km";
+          renderPlaces(data.places);
+        } catch (err) {
+          renderError((err && err.message) || "Đã xảy ra lỗi khi quét địa điểm.");
+        }
+      }
+
+      function openModal() {
+        modal.hidden = false;
+        document.body.style.overflow = "hidden";
+        requestAnimationFrame(function () {
+          modal.classList.add("is-open");
+        });
+        panel.focus();
+        scanNearby(false);
+      }
+
+      function closeModal() {
+        modal.classList.remove("is-open");
+        document.body.style.overflow = "";
+        setTimeout(function () {
+          modal.hidden = true;
+          if (openBtn) openBtn.focus();
+        }, 180);
+      }
+
+      if (openBtn) openBtn.addEventListener("click", openModal);
+      if (closeBtn) closeBtn.addEventListener("click", closeModal);
+      if (refreshBtn) refreshBtn.addEventListener("click", function () { scanNearby(true); });
+
+      if (modal) {
+        modal.addEventListener("click", function (e) {
+          if (e.target === modal) closeModal();
+        });
+      }
+
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && modal && !modal.hidden) closeModal();
+      });
+
+      if (listEl) {
+        listEl.addEventListener("click", function (e) {
+          const btn = e.target.closest(".fd-btn-ai");
+          if (!btn) return;
+          const place = lastPlaces[Number(btn.dataset.idx)];
+          if (place) askAIForPlace(place);
+        });
+      }
+
+      tabs.forEach(function (tab) {
+        tab.addEventListener("click", function () {
+          currentCategory = tab.dataset.cat;
+          currentRadius = 1000;
+          tabs.forEach(function (t) {
+            t.setAttribute("aria-selected", String(t === tab));
+          });
+          scanNearby(false);
+        });
+      });
+    })();
+  </script>
+
   <script>
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("sw.js");
@@ -372,4 +1147,3 @@
   </script>
 </body>
 </html>
-
