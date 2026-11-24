@@ -2202,19 +2202,18 @@ initGPS();
 // AIvolution - FOOD & DRINKS QUANH BẠN (GPS GOOGLE MAPS)
 // ==========================================
 (function initFoodDrinksNearby() {
-  const CACHE_PREFIX = "aivolution_fd_v1";
+  const CACHE_PREFIX = "aivolution_fd_v2";
   const CACHE_TTL_MS = 15 * 60 * 1000;
   const MOVE_THRESHOLD_M = 250;
 
   const openBtn = document.getElementById("fd-open-btn");
   const modal = document.getElementById("fd-modal");
   const panel = document.getElementById("fd-panel");
-  const closeBtn = document.getElementById("fd-close-btn");
   const refreshBtn = document.getElementById("fd-refresh-btn");
   const statusEl = document.getElementById("fd-status");
   const bodyEl = document.getElementById("fd-body");
   const listEl = document.getElementById("fd-list");
-  const tabs = document.querySelectorAll(".fd-tab");
+  const allCatBtns = document.querySelectorAll("[data-fd-cat]");
 
   if (!openBtn || !modal || !panel || !listEl) return;
 
@@ -2225,6 +2224,10 @@ initGPS();
 
   const prefersReducedMotion = () =>
     window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  function formatDist(m) {
+    return m < 1000 ? `${m}m` : `${(m / 1000).toFixed(1)}km`;
+  }
 
   function askAIForPlace(place) {
     const prompt =
@@ -2249,15 +2252,19 @@ initGPS();
 
   function renderSkeletons() {
     bodyEl.setAttribute("aria-busy", "true");
-    listEl.innerHTML = Array.from({ length: 5 })
-      .map(
-        () => `
-        <li class="fd-skeleton">
-          <div class="fd-skel-line w-70"></div>
-          <div class="fd-skel-line w-50"></div>
-        </li>`
-      )
-      .join("");
+    listEl.innerHTML = `
+      <div class="fd-grid">
+        <div class="fd-featured-col">
+          <div class="fd-skel-card"></div>
+          <div class="fd-skel-card"></div>
+        </div>
+        <div class="fd-list-box">
+          <div class="fd-skel-row"></div>
+          <div class="fd-skel-row"></div>
+          <div class="fd-skel-row"></div>
+          <div class="fd-skel-row"></div>
+        </div>
+      </div>`;
   }
 
   function renderPlaces(places) {
@@ -2267,7 +2274,7 @@ initGPS();
     if (!places.length) {
       const nextRadius = currentRadius < 2000 ? 2000 : 3000;
       listEl.innerHTML = `
-        <li class="fd-state-box">
+        <div class="fd-state-box">
           <p class="fd-state-text">
             Không tìm thấy địa điểm từ 4.0★ trở lên trong bán kính ${currentRadius / 1000}km.
           </p>
@@ -2278,7 +2285,7 @@ initGPS();
                 </button>`
               : ""
           }
-        </li>`;
+        </div>`;
       const expandBtn = document.getElementById("fd-expand-btn");
       if (expandBtn) {
         expandBtn.addEventListener("click", () => {
@@ -2289,51 +2296,97 @@ initGPS();
       return;
     }
 
-    listEl.innerHTML = places
-      .map((p, idx) => {
-        const distText =
-          p.distance < 1000 ? `${p.distance}m` : `${(p.distance / 1000).toFixed(1)}km`;
-        return `
-          <li class="fd-card">
-            <div class="fd-card-info">
-              <h3 class="fd-card-name">${escapeHtml(p.name)}</h3>
-              <p class="fd-card-meta">
-                <span class="fd-rating">★ ${p.rating.toFixed(1)}</span>
-                <span>(${p.reviews})</span>
-                <span aria-hidden="true">•</span>
-                <span>${distText}</span>
-                <span aria-hidden="true">•</span>
-                <span>${escapeHtml(p.type)}</span>
-              </p>
-              ${p.address ? `<p class="fd-card-addr">${escapeHtml(p.address)}</p>` : ""}
-            </div>
-            <div class="fd-card-actions">
-              <button type="button" class="fd-btn-ai" data-idx="${idx}" aria-label="Hỏi AI về ${escapeHtml(p.name)}">
-                AI
-              </button>
-              <a
-                class="fd-btn-maps"
-                href="${escapeHtml(p.mapsUrl)}"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Mở Google Maps chỉ đường tới ${escapeHtml(p.name)}"
-              >
-                Maps
-              </a>
-            </div>
-          </li>`;
-      })
+    const featured = places.slice(0, 2);
+    const rest = places.slice(2);
+
+    const featuredHtml = featured
+      .map(
+        (p, idx) => `
+        <article class="fd-featured-card">
+          <div class="fd-featured-top">
+            <span class="fd-rank-badge tabular-nums">TOP ${idx + 1} • ★ ${p.rating.toFixed(1)}</span>
+            <span class="fd-card-meta tabular-nums" style="margin:0">${formatDist(p.distance)}</span>
+          </div>
+          <h3 class="fd-featured-name">${escapeHtml(p.name)}</h3>
+          <p class="fd-card-meta tabular-nums" style="margin:0">
+            <span>${p.reviews} đánh giá</span>
+            <span aria-hidden="true">•</span>
+            <span>${escapeHtml(p.type)}</span>
+          </p>
+          ${p.address ? `<p class="fd-card-addr">${escapeHtml(p.address)}</p>` : ""}
+          <div class="fd-featured-actions">
+            <a
+              class="fd-btn-maps"
+              href="${escapeHtml(p.mapsUrl)}"
+              target="_blank"
+              rel="noopener noreferrer"
+              aria-label="Chỉ đường Google Maps tới ${escapeHtml(p.name)}"
+            >
+              Chỉ đường
+            </a>
+            <button type="button" class="fd-btn-ai" data-idx="${idx}" aria-label="Hỏi AI về ${escapeHtml(p.name)}">
+              Hỏi AI
+            </button>
+          </div>
+        </article>`
+      )
       .join("");
+
+    const listBoxHtml = rest.length
+      ? `
+        <div class="fd-list-box">
+          <ul class="fd-list">
+            ${rest
+              .map(
+                (p, idx) => `
+                <li class="fd-card">
+                  <div class="fd-card-info">
+                    <h3 class="fd-card-name">${escapeHtml(p.name)}</h3>
+                    <p class="fd-card-meta tabular-nums">
+                      <span class="fd-rating">★ ${p.rating.toFixed(1)}</span>
+                      <span>(${p.reviews})</span>
+                      <span aria-hidden="true">•</span>
+                      <span>${formatDist(p.distance)}</span>
+                      <span aria-hidden="true">•</span>
+                      <span>${escapeHtml(p.type)}</span>
+                    </p>
+                  </div>
+                  <div class="fd-card-actions">
+                    <button type="button" class="fd-btn-ai" data-idx="${idx + 2}" aria-label="Hỏi AI về ${escapeHtml(p.name)}">
+                      AI
+                    </button>
+                    <a
+                      class="fd-btn-maps"
+                      href="${escapeHtml(p.mapsUrl)}"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Mở Google Maps tới ${escapeHtml(p.name)}"
+                    >
+                      Maps
+                    </a>
+                  </div>
+                </li>`
+              )
+              .join("")}
+          </ul>
+        </div>`
+      : "";
+
+    listEl.innerHTML = `
+      <div class="fd-grid">
+        <div class="fd-featured-col">${featuredHtml}</div>
+        ${listBoxHtml}
+      </div>`;
   }
 
   function renderError(message) {
     bodyEl.setAttribute("aria-busy", "false");
-    statusEl.textContent = "Không thể quét vị trí";
+    statusEl.textContent = "Chưa quét được";
     listEl.innerHTML = `
-      <li class="fd-state-box is-error">
+      <div class="fd-state-box is-error">
         <p class="fd-state-text">${escapeHtml(message)}</p>
         <button type="button" id="fd-retry-btn" class="fd-action-btn">Thử quét lại</button>
-      </li>`;
+      </div>`;
     const retryBtn = document.getElementById("fd-retry-btn");
     if (retryBtn) {
       retryBtn.addEventListener("click", () => scanNearby(true));
@@ -2367,7 +2420,7 @@ initGPS();
   }
 
   async function scanNearby(forceRefresh = false) {
-    statusEl.textContent = `Đang quét GPS trong ${currentRadius / 1000}km...`;
+    statusEl.textContent = `Đang quét ${currentRadius / 1000}km...`;
     renderSkeletons();
 
     try {
@@ -2380,7 +2433,7 @@ initGPS();
         Math.hypot(coords.lat - cached.lat, coords.lng - cached.lng) * 111000 > MOVE_THRESHOLD_M;
 
       if (!forceRefresh && cached && !movedFar && Date.now() - cached.ts < CACHE_TTL_MS) {
-        statusEl.textContent = `Top ${cached.places.length} nơi (★ cao → thấp) • ${currentRadius / 1000}km`;
+        statusEl.textContent = `Top ${cached.places.length} nơi • ${currentRadius / 1000}km`;
         renderPlaces(cached.places);
         return;
       }
@@ -2398,7 +2451,7 @@ initGPS();
         );
       } catch (_) {}
 
-      statusEl.textContent = `Top ${data.places.length} nơi (★ cao → thấp) • ${currentRadius / 1000}km`;
+      statusEl.textContent = `Top ${data.places.length} nơi • ${currentRadius / 1000}km`;
       renderPlaces(data.places);
     } catch (err) {
       renderError(err?.message || "Đã xảy ra lỗi khi quét địa điểm.");
@@ -2431,17 +2484,19 @@ initGPS();
     if (prefersReducedMotion()) {
       finishClose();
     } else {
-      setTimeout(finishClose, 180);
+      setTimeout(finishClose, 200);
     }
   }
 
   openBtn.addEventListener("click", openModal);
-  if (closeBtn) closeBtn.addEventListener("click", closeModal);
-  if (refreshBtn) refreshBtn.addEventListener("click", () => scanNearby(true));
 
-  modal.addEventListener("click", (e) => {
-    if (e.target === modal) closeModal();
+  modal.querySelectorAll("[data-fd-close]").forEach((el) => {
+    el.addEventListener("click", closeModal);
   });
+
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", () => scanNearby(true));
+  }
 
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !modal.hidden) {
@@ -2457,11 +2512,15 @@ initGPS();
     if (place) askAIForPlace(place);
   });
 
-  tabs.forEach((tab) => {
-    tab.addEventListener("click", () => {
-      currentCategory = tab.dataset.cat;
+  allCatBtns.forEach((btn) => {
+    btn.addEventListener("click", () => {
+      currentCategory = btn.dataset.fdCat;
       currentRadius = 1000;
-      tabs.forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
+      allCatBtns.forEach((b) => {
+        const isMatch = b.dataset.fdCat === currentCategory;
+        b.classList.toggle("active", isMatch);
+        b.setAttribute("aria-selected", String(isMatch));
+      });
       scanNearby(false);
     });
   });
