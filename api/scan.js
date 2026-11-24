@@ -396,18 +396,15 @@ function normalizeScanResult(raw, { areaPoint, locationContext, provider }) {
 // 4. PROMPT CHI TIẾT SÂU SẮC – NHANH – KHÔNG BỊA
 // ==========================================
 function buildVisionPrompt(locationContext) {
-  return `Chuyên gia Computer Vision & OCR của AIvolution. Vị trí: ${locationContext || "Hội An – Đà Nẵng"}.
-
-LUẬT BẮT BUỘC:
-1. OCR: Chép nguyên văn chữ/logo trường học/thương hiệu/dung tích/Hán-Nôm thấy rõ vào "chu_doc_duoc_tren_anh" (không có ghi "Không có chữ").
-2. ĐẶT TÊN TRONG "ten_dia_diem": ĐÂY LÀ TIÊU ĐỀ HIỂN THỊ CHÍNH. BẮT BUỘC ghi tên gọi cụ thể, chính xác bằng tiếng Việt của vật thể, món ăn, sản phẩm, logo trường học hoặc địa điểm nhìn thấy (VD: "Dây treo trang trí Tết Vạn Sự Như Ý", "Bình lắc tập gym màu đen", "Trường THPT Trần Quý Cáp"). TUYỆT ĐỐI KHÔNG BAO GIỜ ghi "Chưa xác định rõ từ ảnh" hay "Không áp dụng" vào "ten_dia_diem".
-3. CHỐNG BỊA: Không tự bịa tên thương hiệu, địa chỉ hay năm thành lập nếu không chắc 100% (riêng "dia_chi" nếu không rõ mới ghi "Chưa xác định rõ từ ảnh"). Logo/phù hiệu trường học đặt "loai_doi_tuong": "Trường học & Tổ chức", "la_dia_diem": true.
-4. GIÁ & CALO:
-   - Giá ("nien_dai_hoac_gia"): Với vật thể/đồ trang trí/sản phẩm/món ăn phổ biến tại Việt Nam, ước lượng khoảng giá bán lẻ thực tế VNĐ (VD: "25.000 - 60.000 VNĐ"). Với trường học/di tích, ghi năm thành lập thật hoặc "Chưa xác định rõ".
-   - Calo (KHÔNG BỊA): Đọc nhãn bao bì hoặc cộng định lượng nguyên liệu nhìn thấy rõ (ghi rõ từng phần vào "chi_tiet_san_pham"). Hộp kín/che khuất ghi "Chưa đủ dữ liệu trên ảnh". Logo/địa điểm/đồ vật không ăn được ghi "Không áp dụng".
-5. Đặc sản: Phân biệt chính xác đặc sản Hội An Đà Nẵng 100% không bịa không nhầm
-6. ĐỘ CHI TIẾT & TỐC ĐỘ: Viết giàu thông tin, cụ thể nhưng gọn ý (2–3 câu cho mục chính, 1–2 câu cho mục phụ) để vừa đủ chiều sâu vừa trả về nhanh. CHỈ TRẢ JSON THUẦN, KHÔNG GIẢI THÍCH THÊM:
-
+  return `Chuyên gia Vision & OCR AIvolution (${locationContext || "Hội An – Đà Nẵng"}).
+Luật:
+1. OCR: Chép nguyên văn chữ/logo/dung tích/Hán-Nôm thấy rõ vào "chu_doc_duoc_tren_anh" (không có ghi "Không có chữ").
+2. "ten_dia_diem": Ghi tên tiếng Việt cụ thể, chính xác của món ăn/vật thể/sản phẩm/địa điểm/trường học (cấm ghi "Chưa xác định").
+3. Chống bịa: Không bịa thương hiệu, địa chỉ, năm thành lập (không chắc "dia_chi" ghi "Chưa xác định rõ từ ảnh"). Logo trường/tổ chức đặt "la_dia_diem":true. Phân biệt chuẩn 100% đặc sản Hội An – Đà Nẵng.
+4. Giá & Calo: Ước lượng khoảng giá VNĐ thực tế tại VN cho món/sản phẩm. Calo phải đọc từ nhãn hoặc cộng từng nguyên liệu thấy rõ (liệt kê rõ từng phần vào "chi_tiet_san_pham"); bị che ghi "Chưa đủ dữ liệu trên ảnh"; đồ không ăn được ghi "Không áp dụng".
+5. YÊU CẦU CHI TIẾT: Phân tích sâu, đầy đủ thông tin, cụ thể theo ảnh (2–3 câu cho mỗi mục chính). CHỈ TRẢ JSON THUẦN:
+{"khong_nhan_dien_duoc":false,"chu_doc_duoc_tren_anh":"","loai_doi_tuong":"Trường học & Tổ chức|Thương hiệu|Di tích|Nhà hàng & Quán ăn|Shop & Workshop|Hán Nôm|Thức ăn & Đồ uống|Sản phẩm|Vật thể","la_dia_diem":false,"ten_dia_diem":"","dia_chi":"","nien_dai_hoac_gia":"","cau_chuyen_lich_su":"2-3 câu đầy đủ về bản chất, nguồn gốc/ý nghĩa văn hóa và công dụng thực tế","giai_thoai_dac_biet":"2-3 câu mô tả sắc nét màu sắc, hoa văn, bố cục, chất liệu, topping hoặc điểm nhấn nhìn thấy trong ảnh","thong_tin_san_pham":{"hien_thi":true,"calo_uoc_tinh":"","tot_cho_suc_khoe":"1-2 câu đánh giá dinh dưỡng/độ an toàn và lưu ý sử dụng (hoặc Không áp dụng)","chi_tiet_san_pham":"2 câu liệt kê rõ bảng cộng định lượng calo từng thành phần (nếu là món ăn) hoặc chất liệu, thông số, dung tích nổi bật","noi_mua_goi_y":"Địa điểm/khu vực hoặc hệ thống cửa hàng cụ thể tại Đà Nẵng – Hội An","tu_khoa_mua_hang":""},"han_viet":{"co_han_viet":false,"chu_goc":"","phien_am":"","phan_tich_tung_tu":[],"y_nghia_tong_the":""},"danh_gia_ban_dia":{"tom_tat":"1-2 câu nhận xét khách quan về giá trị sử dụng, độ phổ biến hoặc hương vị","review_mau":["Ưu điểm cụ thể thực tế","Lưu ý hữu ích khi mua hoặc thưởng thức"]}}`;
+}
 {
   "khong_nhan_dien_duoc": false,
   "chu_doc_duoc_tren_anh": "Chữ/logo/dung tích đọc được",
@@ -526,7 +523,7 @@ async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadli
             body: JSON.stringify({
               model,
               temperature: 0.1,
-              max_tokens: 1800,
+              max_tokens: 1300,
               reasoning: { enabled: false },
               messages: [
                 {
