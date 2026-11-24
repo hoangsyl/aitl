@@ -1,5 +1,5 @@
 /**
- * AIvolution Team - OpenRouter Free Vision Primary + Groq Chat/Backup + Auto-Verify + 100 Users
+ * AIvolution Team - High-Speed OpenRouter Free Vision (Hedged + Throughput) + Groq Chat + Auto-Verify
  * Bản quyền thuộc về AIvolution Team
  */
 
@@ -7,11 +7,11 @@ const tls = require("tls");
 const crypto = require("crypto");
 
 // ==========================================
-// 1. CẤU HÌNH HỆ THỐNG (OPENROUTER VISION CHÍNH – GROQ CHAT CHÍNH & DỰ PHÒNG)
+// 1. CẤU HÌNH HỆ THỐNG (TỐI ƯU TỐC ĐỘ 3–5s)
 // ==========================================
 const CONFIG = {
   DN_HA_BOUNDS: { minLat: 15.70, maxLat: 16.20, minLng: 107.90, maxLng: 108.45 },
-  OPENROUTER_VISION_FALLBACK_MODELS: [
+  OPENROUTER_VISION_MODELS: [
     "openrouter/free",
     "qwen/qwen2.5-vl-72b-instruct:free",
     "qwen/qwen2.5-vl-32b-instruct:free",
@@ -26,12 +26,12 @@ const CONFIG = {
     "google/gemma-4-26b-a4b-it:free",
     "nvidia/nemotron-3.5-lightning:free"
   ],
-  TOTAL_SCAN_BUDGET_MS: 10500,
-  OPENROUTER_VISION_TIMEOUT_MS: 4200,
-  OPENROUTER_MODELS_TIMEOUT_MS: 1500,
-  GROQ_BACKUP_TIMEOUT_MS: 3000,
+  TOTAL_SCAN_BUDGET_MS: 9500,
+  HEDGE_DELAY_MS: 2200,
+  OPENROUTER_VISION_TIMEOUT_MS: 4600,
+  GROQ_BACKUP_TIMEOUT_MS: 2800,
   GROQ_MODELS_TIMEOUT_MS: 1200,
-  SERPER_TIMEOUT_MS: 800,
+  SERPER_TIMEOUT_MS: 750,
   CHAT_TIMEOUT_MS: 4500,
   TTS_TIMEOUT_MS: 4000,
   MODELS_CACHE_TTL_MS: 20 * 60 * 1000,
@@ -48,8 +48,6 @@ const CONFIG = {
 const runtimeState = {
   cachedGroqModels: null,
   cachedGroqModelsAt: 0,
-  cachedOpenRouterVisionModels: null,
-  cachedOpenRouterVisionModelsAt: 0,
   groqVisionDisabledUntil: 0,
   badGroqVisionModels: new Set(),
   badOpenRouterModels: new Set(),
@@ -407,160 +405,155 @@ Luật:
 }
 
 // ==========================================
-// 5. TẦNG 1 (QUÉT ẢNH CHÍNH): OPENROUTER FREE VISION + TỰ TÌM MODEL :FREE HỖ TRỢ ẢNH
+// 5. TẦNG 1 (QUÉT ẢNH CHÍNH TỐC ĐỘ CAO): OPENROUTER THROUGHPUT + BẮN GỐI ĐẦU 2.2s
 // ==========================================
-async function fetchLiveOpenRouterVisionModels(timeoutMs = CONFIG.OPENROUTER_MODELS_TIMEOUT_MS) {
-  const now = Date.now();
-  if (
-    runtimeState.cachedOpenRouterVisionModels &&
-    now - runtimeState.cachedOpenRouterVisionModelsAt < CONFIG.MODELS_CACHE_TTL_MS
-  ) {
-    return runtimeState.cachedOpenRouterVisionModels;
+async function callSingleOpenRouterVision({ apiKey, model, prompt, imageUrl, timeoutMs }) {
+  const res = await fetchWithTimeout(
+    "https://openrouter.ai/api/v1/chat/completions",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "HTTP-Referer": "https://aitl-teal.vercel.app",
+        "X-Title": "AIvolution"
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        max_tokens: 1100,
+        reasoning: { enabled: false },
+        provider: { sort: "throughput" }, // Ưu tiên máy chủ trả chữ nhanh nhất
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              { type: "image_url", image_url: { url: imageUrl } }
+            ]
+          }
+        ]
+      })
+    },
+    timeoutMs
+  );
+
+  const rawText = await res.text();
+  if (!res.ok) {
+    let errDetail = "";
+    try {
+      errDetail = JSON.parse(rawText)?.error?.message || "";
+    } catch (_) {}
+
+    if (res.status === 404) {
+      runtimeState.badOpenRouterModels.add(model);
+    } else if (res.status === 429 || res.status === 502 || res.status === 503) {
+      runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+      if (res.status === 429 && model === "openrouter/free") {
+        markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
+      }
+    } else if (res.status === 401 || res.status === 402 || res.status === 403) {
+      markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
+    }
+    throw new Error(`OpenRouter(${model}) HTTP ${res.status}${errDetail ? `: ${errDetail.slice(0, 80)}` : ""}`);
   }
 
-  return runSingleFlight("openrouter:vision-models", async () => {
-    try {
-      const res = await fetchWithTimeout(
-        "https://openrouter.ai/api/v1/models",
-        {
-          headers: {
-            "HTTP-Referer": "https://aitl-teal.vercel.app",
-            "X-Title": "AIvolution"
-          }
-        },
-        timeoutMs
-      );
-      if (!res.ok) return CONFIG.OPENROUTER_VISION_FALLBACK_MODELS;
+  const parsed = JSON.parse(rawText.trim());
+  const msgObj = parsed.choices?.[0]?.message || {};
+  const content = msgObj.content || msgObj.reasoning || "";
+  if (!content) {
+    runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
+    throw new Error(`OpenRouter(${model}): Empty content`);
+  }
 
-      const data = await res.json();
-      const dynamicFreeVision = (data.data || [])
-        .filter((m) => {
-          const id = String(m?.id || "");
-          if (!id.endsWith(":free")) return false;
-          const mods = m?.architecture?.input_modalities || [];
-          return Array.isArray(mods) && mods.includes("image");
-        })
-        .map((m) => m.id);
-
-      const merged = [
-        "openrouter/free",
-        ...dynamicFreeVision,
-        ...CONFIG.OPENROUTER_VISION_FALLBACK_MODELS
-      ];
-      const unique = [...new Set(merged)];
-
-      runtimeState.cachedOpenRouterVisionModels = unique;
-      runtimeState.cachedOpenRouterVisionModelsAt = Date.now();
-      return unique;
-    } catch (_) {
-      return CONFIG.OPENROUTER_VISION_FALLBACK_MODELS;
-    }
-  });
+  const usedModel = parsed.model || model;
+  return {
+    result: extractJson(content),
+    provider: `openrouter:${String(usedModel).split("/").pop()}`
+  };
 }
 
 async function runOpenRouterPrimaryVision({ apiKeys, prompt, imageBase64, deadline }) {
   const imageUrl = String(imageBase64).startsWith("data:image")
     ? imageBase64
     : `data:image/jpeg;base64,${imageBase64}`;
-  const errors = [];
   const now = Date.now();
 
-  const candidateModels = await fetchLiveOpenRouterVisionModels(
-    Math.min(CONFIG.OPENROUTER_MODELS_TIMEOUT_MS, Math.max(700, deadline - now - 2500))
-  );
-
-  const availableModels = candidateModels.filter(
+  const available = CONFIG.OPENROUTER_VISION_MODELS.filter(
     (m) => !runtimeState.badOpenRouterModels.has(m)
   );
-  const readyModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now);
-  const coolingModels = availableModels.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) > now);
-  const orderedModels = [...readyModels, ...coolingModels];
+  const orderedModels = [
+    ...available.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) <= now),
+    ...available.filter((m) => (runtimeState.modelCooldownUntil.get(m) || 0) > now)
+  ];
 
-  for (const model of orderedModels) {
-    const remainingForModel = deadline - Date.now();
-    if (remainingForModel < 1300) break;
+  const primaryKey = apiKeys[0];
+  const backupKey = apiKeys[1] || apiKeys[0];
+  const errors = [];
 
-    for (const apiKey of apiKeys.slice(0, 2)) {
-      const remaining = deadline - Date.now();
-      if (remaining < 1300) break;
+  // Đua gối đầu (Hedged Request): Gọi Model 1 ngay, nếu lỗi sớm hoặc quá 2.2s chưa xong thì bắn song song Model 2
+  const m1 = orderedModels[0];
+  const m2 = orderedModels[1];
+  if (m1 && m2) {
+    try {
+      let hedgeTimer = null;
+      let startedP2 = false;
+      let triggerP2 = null;
 
-      try {
-        const res = await fetchWithTimeout(
-          "https://openrouter.ai/api/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${apiKey}`,
-              "HTTP-Referer": "https://aitl-teal.vercel.app",
-              "X-Title": "AIvolution"
-            },
-            body: JSON.stringify({
-              model,
-              temperature: 0.1,
-              max_tokens: 1300,
-              reasoning: { enabled: false },
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    { type: "text", text: prompt },
-                    { type: "image_url", image_url: { url: imageUrl } }
-                  ]
-                }
-              ]
-            })
-          },
-          Math.min(CONFIG.OPENROUTER_VISION_TIMEOUT_MS, remaining)
-        );
+      const p1 = callSingleOpenRouterVision({
+        apiKey: primaryKey,
+        model: m1,
+        prompt,
+        imageUrl,
+        timeoutMs: Math.min(CONFIG.OPENROUTER_VISION_TIMEOUT_MS, deadline - Date.now())
+      });
 
-        const rawText = await res.text();
-        if (!res.ok) {
-          let errDetail = "";
-          try {
-            errDetail = JSON.parse(rawText)?.error?.message || "";
-          } catch (_) {}
-
-          if (res.status === 404) {
-            runtimeState.badOpenRouterModels.add(model);
-          } else if (res.status === 429 || res.status === 502 || res.status === 503) {
-            runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
-            if (res.status === 429 && model === "openrouter/free") {
-              markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_429_MS);
-            }
-          } else if (res.status === 401 || res.status === 402 || res.status === 403) {
-            markKeyCooldown(apiKey, CONFIG.KEY_COOLDOWN_AUTH_MS);
-          }
-          throw new Error(`OpenRouter(${model}) HTTP ${res.status}${errDetail ? `: ${errDetail.slice(0, 80)}` : ""}`);
-        }
-
-        const parsed = JSON.parse(rawText.trim());
-        const msgObj = parsed.choices?.[0]?.message || {};
-        const content = msgObj.content || msgObj.reasoning || "";
-        if (!content) {
-          runtimeState.modelCooldownUntil.set(model, Date.now() + CONFIG.MODEL_COOLDOWN_MS);
-          throw new Error(`OpenRouter(${model}): Empty content`);
-        }
-
-        const usedModel = parsed.model || model;
-        return {
-          result: extractJson(content),
-          provider: `openrouter:${String(usedModel).split("/").pop()}`
+      const p2 = new Promise((resolve, reject) => {
+        triggerP2 = () => {
+          if (startedP2) return;
+          startedP2 = true;
+          clearTimeout(hedgeTimer);
+          const left = deadline - Date.now();
+          if (left < 1400) return reject(new Error("Hết thời gian cho nhánh dự phòng"));
+          callSingleOpenRouterVision({
+            apiKey: backupKey,
+            model: m2,
+            prompt,
+            imageUrl,
+            timeoutMs: Math.min(CONFIG.OPENROUTER_VISION_TIMEOUT_MS, left)
+          }).then(resolve, reject);
         };
-      } catch (err) {
-        const msg = err?.name === "AbortError" ? `OpenRouter(${model}) Timeout` : err.message;
-        errors.push(msg);
-        if (
-          msg.includes("404") ||
-          msg.includes("429") ||
-          msg.includes("502") ||
-          msg.includes("503") ||
-          msg.includes("Empty content") ||
-          msg.includes("Timeout")
-        ) {
-          break;
-        }
-      }
+        hedgeTimer = setTimeout(triggerP2, CONFIG.HEDGE_DELAY_MS);
+      });
+
+      p1.then(
+        () => clearTimeout(hedgeTimer),
+        () => triggerP2 && triggerP2()
+      );
+
+      return await Promise.any([p1, p2]);
+    } catch (aggErr) {
+      const list = aggErr?.errors || [aggErr];
+      list.forEach((e) =>
+        errors.push(e?.name === "AbortError" ? "OpenRouter Timeout" : e?.message || "Failed")
+      );
+    }
+  }
+
+  // Nếu 2 model đầu đều lỗi -> thử nhanh model thứ 3 và thứ 4
+  for (const model of orderedModels.slice(2, 4)) {
+    const remaining = deadline - Date.now();
+    if (remaining < 1400) break;
+    try {
+      return await callSingleOpenRouterVision({
+        apiKey: backupKey,
+        model,
+        prompt,
+        imageUrl,
+        timeoutMs: Math.min(3600, remaining)
+      });
+    } catch (err) {
+      errors.push(err?.name === "AbortError" ? `OpenRouter(${model}) Timeout` : err.message);
     }
   }
 
@@ -635,7 +628,7 @@ async function callGroqVision({ apiKey, model, prompt, imageBase64, timeoutMs })
       body: JSON.stringify({
         model,
         temperature: 0.1,
-        max_tokens: 1300,
+        max_tokens: 1100,
         messages: [
           {
             role: "user",
@@ -734,7 +727,7 @@ async function runGroqBackupVision({ apiKeys, prompt, imageBase64, deadline }) {
 }
 
 // ==========================================
-// 7. XÁC THỰC GOOGLE THÔNG MINH (MAX 800ms + CACHE 60P)
+// 7. XÁC THỰC GOOGLE THÔNG MINH (CHỈ GỌI KHI CÓ ĐỊA ĐIỂM HOẶC THƯƠNG HIỆU RÕ)
 // ==========================================
 async function querySerperCached(query, num = 4, timeoutMs = CONFIG.SERPER_TIMEOUT_MS) {
   const normKey = `serper:${normalizeTextForMatch(query)}:${num}`;
@@ -903,17 +896,16 @@ async function autoVerifyWithGoogle(payload, { areaPoint, locationContext, timeo
     return attachMapLinks(payload, { areaPoint, locationContext });
   }
 
+  // Bỏ qua tra Google nếu là đồ vật thông thường không có chữ/thương hiệu rõ -> tiết kiệm ~0.8s
   const hasBrandText = Boolean(payload._ocr && !/^không có chữ$/i.test(payload._ocr) && payload._ocr.length >= 3);
-  if (isFood && !hasBrandText) return payload;
-  if (!hasBrandText && /\d/.test(payload.nien_dai_hoac_gia)) return payload;
+  if (!hasBrandText || isFood) return payload;
 
   const unitMatch = String(payload._ocr || "").match(/\b\d+\s*(?:ml|g|kg|lít|l|viên|gói)\b/i);
   const searchName = unitMatch && !payload.ten_dia_diem.toLowerCase().includes(unitMatch[0].toLowerCase())
     ? `${payload.ten_dia_diem} ${unitMatch[0]}`
     : payload.ten_dia_diem;
 
-  const priceQuery = hasBrandText ? `giá ${searchName} chính hãng` : `giá bán ${searchName}`;
-  const data = await querySerperCached(priceQuery, 4, timeoutMs);
+  const data = await querySerperCached(`giá ${searchName} chính hãng`, 4, timeoutMs);
   if (data) {
     const realPrice = extractPriceRangeFromSerper(data);
     if (realPrice) {
@@ -1058,6 +1050,7 @@ async function handleOpenRouterBackupChat({ apiKeys, messages, locationContext, 
               temperature: 0.3,
               max_tokens: 650,
               reasoning: { enabled: false },
+              provider: { sort: "throughput" },
               messages: chatMessages
             })
           },
@@ -1374,7 +1367,7 @@ async function generateVoiceBase64(rawText) {
 }
 
 // ==========================================
-// 10. ENTRY POINT SERVERLESS HANDLER (OPENROUTER VISION CHÍNH -> GROQ BACKUP)
+// 10. ENTRY POINT SERVERLESS HANDLER (OPENROUTER TỐC ĐỘ CAO -> GROQ BACKUP)
 // ==========================================
 module.exports = async (req, res) => {
   res.setHeader("Content-Type", "application/json; charset=utf-8");
@@ -1436,7 +1429,7 @@ module.exports = async (req, res) => {
       throw new Error("Không có API Key hoạt động cho Chatbot");
     }
 
-    // --- 3. QUÉT ẢNH (OPENROUTER FREE VISION CHÍNH -> GROQ BACKUP -> TỰ XÁC THỰC GOOGLE) ---
+    // --- 3. QUÉT ẢNH (OPENROUTER TỐC ĐỘ CAO -> GROQ BACKUP -> TỰ XÁC THỰC GOOGLE) ---
     const { imageBase64, locationContext, lat, lng } = body;
     if (!imageBase64) {
       return res.status(400).json({ error: CONFIG.FRIENDLY_ERROR, debug: "Thiếu dữ liệu ảnh" });
@@ -1456,14 +1449,14 @@ module.exports = async (req, res) => {
       let visionOutput = null;
       let openRouterError = null;
 
-      // Bước 1: Gọi thẳng OpenRouter Free Vision (tự động lấy model :free có hỗ trợ ảnh + xoay vòng)
+      // Bước 1: Gọi OpenRouter Free Vision (bắn gối đầu sau 2.2s + ưu tiên throughput)
       if (openRouterKeys.length) {
         try {
           visionOutput = await runOpenRouterPrimaryVision({
             apiKeys: openRouterKeys,
             prompt,
             imageBase64,
-            deadline: Math.min(deadline, Date.now() + 9200)
+            deadline: Math.min(deadline, Date.now() + 8500)
           });
         } catch (err) {
           openRouterError = err;
@@ -1504,9 +1497,9 @@ module.exports = async (req, res) => {
 
       if (payload.error) return payload;
 
-      // Bước 3: Tự xác thực địa chỉ/năm thành lập/giá qua Google nếu còn quỹ thời gian
+      // Bước 3: Tự xác thực địa chỉ/năm thành lập/giá qua Google (chỉ khi có địa điểm hoặc thương hiệu rõ)
       const timeLeftForSerper = deadline - Date.now();
-      if (timeLeftForSerper >= 850) {
+      if (timeLeftForSerper >= 800) {
         payload = await autoVerifyWithGoogle(payload, {
           areaPoint,
           locationContext,
